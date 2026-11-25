@@ -1,9 +1,13 @@
 # Who Stands In The Way
 
-Tracks where every member of Congress (plus the President and VP) stands on Medicare for All,
+Tracks where every member of the Congress sworn in on January 3, 2027 (plus the President and VP) stands on Medicare for All,
 what they've said on the record, and who funds them. One Cloudflare Worker + D1 database.
 
 - **Dashboard** (`/`): vote charts, searchable roster, profile drawer with stance, appearances, socials, money.
+- **Map**: every state's senators and House seats, colored by party, Medicare for All stance or lean; tap a state for its members.
+- **Issues** (`/#/issues`): the ~30 issues Americans rank highest, with linked polling; each profile has a position matrix on them.
+- **2026 results** (`/#/elections`): every House and Senate race, plus exit-poll findings for Senate races.
+- **Congress selector**: the 120th (from Jan 3, 2027, the default) or the current 119th.
 - **Admin** (`/#/admin`): password sign-in. Log appearances, add outlets, set stances, add policies, add people, document donors.
 
 ## Run locally
@@ -31,14 +35,24 @@ npx cf deploy --secrets-file .secrets.env
 
 ## Refresh the baseline data
 
-Raw downloads live in `data/raw/` (not committed). `scripts/build_seed.py` turns them into `seed/seed.json`.
-The seed only loads into an **empty** database, so re-running it never overwrites admin edits.
+Raw downloads live in `data/raw/` (not committed). `scripts/fetch_roster_120.py` downloads the incoming roster
+(add `--refresh` to re-pull Wikipedia), then `scripts/build_seed.py` turns everything into `seed/seed.json`.
+
+When a deploy ships a new seed, the site refreshes the roster and FEC figures on its next request. Hand-entered work
+is kept: stances you edited, appearances, donors, outlets, policies and people you added. Members who drop off the
+roster are marked "former" and hidden, not deleted.
 
 | Data | Source |
 |---|---|
-| Members, websites, official socials | `unitedstates.github.io/congress-legislators` (`legislators-current.json`, `legislators-social-media.json`) |
+| January 2027 roster | Wikipedia "120th United States Congress" member list (revision pinned in the seed) |
+| IDs, photos, socials for newcomers | Wikidata, matched by Wikipedia article |
+| Returning members' websites and official socials | `unitedstates.github.io/congress-legislators` |
+| Newcomers' Medicare for All stance | Researched Nov 2026 from campaign statements; each has a source link (`data/raw/research/`) |
 | Extra X handles, Bluesky | Wikidata (properties P2002, P12361, matched on Bioguide ID) |
-| Medicare for All support | congress.gov API: sponsors + cosponsors of H.R.3069 and S.1506 (119th) |
+| Returning members' support | congress.gov API: sponsors + cosponsors of H.R.3069 and S.1506 (119th) |
+| Lean (starting point) | Voteview DW-NOMINATE scores, 119th Congress; newcomers start as unknown; hand edits are kept |
+| 2026 results, Cook PVI | Wikipedia "2026 United States House/Senate elections" (`scripts/results2026.py`) |
+| Exit polls, issue polling | Researched Nov 2026 with source links (`data/raw/research/exit_*.json`, `issues.json`) |
 | Campaign money | FEC bulk files, 2025-26: `weball26`, `cm26`, `pas226`, `independent_expenditure_2026.csv` |
 
 Health-industry PACs are flagged by name matching in `scripts/build_seed.py` (`SECTORS`); edit the lists there.

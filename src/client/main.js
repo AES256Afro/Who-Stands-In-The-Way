@@ -1,4 +1,5 @@
 import { renderAdmin, adminProfileTools, bindAdmin } from "./admin.js";
+import { mapHtml, stateHtml, renderIssues, renderElections, issueMatrix, leanBox, LEAN, bindViews } from "./views.js";
 
 export const STANCE = {
 	supports: "Supports",
@@ -8,6 +9,15 @@ export const STANCE = {
 	unknown: "Not on record",
 };
 export const STANCE_ORDER = ["supports", "public_option", "unclear", "unknown", "opposes"];
+export const KIND = {
+	show: "TV / show / podcast",
+	quote: "Quote or statement",
+	vote: "Vote",
+	post: "Social media post",
+	speech: "Speech or town hall",
+	article: "Article or interview",
+	other: "Other",
+};
 export const SIGNAL = {
 	supported: ["Voiced support", "supports"],
 	public_option: ["Pushed public option", "public_option"],
@@ -15,20 +25,22 @@ export const SIGNAL = {
 	dodged: ["Dodged the question", "unknown"],
 	opposed: ["Opposed", "opposes"],
 };
-const PARTY = { D: "Democrat", R: "Republican", I: "Independent" };
+export const PARTY = { D: "Democrat", R: "Republican", I: "Independent" };
 const SECTOR = { pharma: "Pharma", insurance: "Insurance", hospitals: "Hospitals" };
 
 export const S = {
 	data: null, admin: false, configured: true, policy: null, pos: new Map(),
-	f: { q: "", chamber: "", party: "", stance: "", state: "", sort: "name", health: false },
+	f: { q: "", chamber: "", party: "", stance: "", state: "", sort: "name", health: false, cohort: "", lean: "" },
+	congress: null, byId: new Map(), mapMode: "party", mapState: "",
 	adminTab: "appearance",
 };
 const $ = (s, el = document) => el.querySelector(s);
 export const h = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 export const url = (u) => (/^https?:\/\//i.test(u || "") ? h(u) : "#");
 export const money = (n) => (n == null ? "—" : "$" + Math.round(n).toLocaleString("en-US"));
-const short = (n) => (n >= 1e6 ? "$" + (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e3 ? "$" + Math.round(n / 1e3) + "k" : "$" + Math.round(n || 0));
+export const short = (n) => (n >= 1e6 ? "$" + (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e3 ? "$" + Math.round(n / 1e3) + "k" : "$" + Math.round(n || 0));
 export const seat = (p) => (p.chamber === "executive" ? p.role : `${p.state}${p.chamber === "house" && p.district ? "-" + p.district : p.chamber === "house" ? "-AL" : ""}`);
+export const year = (d) => (d ? d.slice(0, 4) : "");
 export const fmtDate = (d) => (d ? new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "");
 
 export async function api(path, opts = {}) {
@@ -53,12 +65,32 @@ export function toast(msg, err) {
 
 export async function load() {
 	const [data, me] = await Promise.all([api("bootstrap"), api("me")]);
+	data.all = data.politicians.filter((p) => p.status !== "former");
+	S.byId = new Map(data.all.map((p) => [p.id, p]));
 	S.data = data;
+	S.congress ??= data.meta?.default_congress || 120;
+	applyCongress();
 	S.admin = me.admin;
 	S.configured = me.configured;
 	if (!S.policy || !data.policies.some((p) => p.id === S.policy)) S.policy = data.policies[0]?.id;
 	indexPositions();
 }
+// Members of the selected Congress. 120th: everyone with a 120th term (plus people added by hand, who have no
+// terms). 119th: the term rows, with chamber/seat/party as they were in that Congress.
+export function applyCongress() {
+	const d = S.data, terms = d.terms || [];
+	const any = new Set(terms.map((t) => t.politician_id));
+	const inC = terms.filter((t) => t.congress === S.congress);
+	if (S.congress === 120 || !inC.length) {
+		const has = new Set(inC.map((t) => t.politician_id));
+		d.politicians = d.all.filter((p) => p.status !== "departing" && (has.has(p.id) || !any.has(p.id)));
+	} else {
+		d.politicians = inC.filter((t) => S.byId.has(t.politician_id)).map((t) => ({ ...S.byId.get(t.politician_id),
+			chamber: t.chamber, state: t.state, district: t.district, party: t.party, voting: t.voting, role: t.role }));
+	}
+}
+export const isNext = () => S.congress === (S.data.meta?.default_congress || 120);
+export const congressLabel = () => (S.data.meta?.congresses || []).find((c) => c.id === S.congress)?.label || "";
 function indexPositions() {
 	S.pos = new Map();
 	for (const p of S.data.positions) if (p.policy_id === S.policy) S.pos.set(p.politician_id, p);
@@ -126,13 +158,17 @@ function filtered() {
 		(!q || `${p.name} ${p.state} ${seat(p)} ${p.twitter || ""}`.toLowerCase().includes(q)) &&
 		(!f.chamber || p.chamber === f.chamber) && (!f.party || p.party === f.party) &&
 		(!f.stance || stanceOf(p.id) === f.stance) && (!f.state || p.state === f.state) &&
-		(!f.health || p.health_total > 0));
+		(!f.health || p.health_total > 0) &&
+		(!f.lean || (p.lean || "unknown") === f.lean) &&
+		(!f.cohort || (f.cohort === "new" ? p.status === "incoming" : f.cohort === "returning" ? p.status === "current"
+			: f.cohort === "departing" ? p.status === "departing" : year(p.next_election) === f.cohort)));
 	const by = {
 		name: (a, b) => a.last.localeCompare(b.last),
 		state: (a, b) => a.state.localeCompare(b.state) || (a.district || 0) - (b.district || 0),
 		health: (a, b) => (b.health_total || 0) - (a.health_total || 0),
 		outside: (a, b) => (b.outside_support + b.outside_oppose) - (a.outside_support + a.outside_oppose),
 		pacs: (a, b) => (b.pacs || 0) - (a.pacs || 0),
+		election: (a, b) => (a.next_election || "9").localeCompare(b.next_election || "9") || a.last.localeCompare(b.last),
 	}[f.sort];
 	return rows.sort(by);
 }
@@ -149,33 +185,43 @@ function listHtml() {
 			: p.health_total > 0 ? `${short(p.health_total)} health-industry PACs` : "";
 		return `<button class="row" style="--stance:var(--s-${st})" data-id="${h(p.id)}">
 			${avatar(p)}
-			<span><span class="name">${h(p.name)}</span><br><span class="meta"><span class="party ${h(p.party)}">${h(p.party)}</span> · ${h(seat(p))} · ${h(p.role)}${p.voting ? "" : p.chamber === "house" ? " (non-voting)" : ""}${p.status === "incoming" ? " · incoming" : ""}</span></span>
-			<span class="right">${pill(st)}<span>${h(extra)}${apps.get(p.id) ? ` · ${apps.get(p.id)} clip${apps.get(p.id) > 1 ? "s" : ""}` : ""}</span></span>
+			<span><span class="name">${h(p.name)}</span><br><span class="meta"><span class="party ${h(p.party)}">${h(p.party)}</span> · ${h(seat(p))} · ${h(p.role)}${p.voting ? "" : p.chamber === "house" ? " (non-voting)" : ""}${p.status === "incoming" ? ` · <span class="tag new">New</span>` : ""}${p.status === "departing" ? ` · <span class="tag">Leaving</span>` : ""}${p.lean && p.lean !== "unknown" ? ` · <span class="tag lean" style="--lean:var(--l-${h(p.lean)})">${h(LEAN[p.lean])}</span>` : ""}</span></span>
+			<span class="right">${pill(st)}<span>${p.next_election ? `Up ${year(p.next_election)}` : ""}${extra ? " · " + h(extra) : ""}${apps.get(p.id) ? ` · ${apps.get(p.id)} clip${apps.get(p.id) > 1 ? "s" : ""}` : ""}</span></span>
 		</button>`;
 	}).join("");
 }
 export function appHtml(a, withName = true) {
-	const p = S.data.politicians.find((x) => x.id === a.politician_id);
+	const p = S.byId.get(a.politician_id);
 	const [sl, sc] = SIGNAL[a.signal] || [null, "unknown"];
 	return `<div class="app">
 		<time>${h(fmtDate(a.date))}</time>
 		<div>
-			<div class="t">${withName && p ? `<a href="#/p/${h(p.id)}">${h(p.name)}</a> — ` : ""}${h(a.title || "Appearance")}</div>
+			<div class="t">${withName && p ? `<a href="#/p/${h(p.id)}">${h(p.name)}</a> — ` : ""}${h(a.title || KIND[a.kind] || "Appearance")}</div>
+			${a.kind ? `<span class="tag">${h(KIND[a.kind] || a.kind)}</span> ` : ""}
 			<span class="outlet">${a.outlet_logo ? `<img src="${url(a.outlet_logo)}" alt="">` : ""}${a.outlet_website ? `<a href="${url(a.outlet_website)}" target="_blank" rel="noopener">${h(a.outlet_name)}</a>` : h(a.outlet_name || "")}</span>
 			${a.quote ? `<blockquote>${h(a.quote)}</blockquote>` : ""}
 			${a.notes ? `<p class="note">${h(a.notes)}</p>` : ""}
 		</div>
 		<div class="links">${sl ? `<span class="pill"><i class="dot c-${sc}"></i>${h(sl)}</span>` : ""}
-			${a.clip_url ? `<a class="btn small" href="${url(a.clip_url)}" target="_blank" rel="noopener">Watch clip ↗</a>` : ""}
+			${a.clip_url ? `<a class="btn small" href="${url(a.clip_url)}" target="_blank" rel="noopener">Source ↗</a>` : ""}
+			${a.post_url ? `<a class="btn small primary" href="${url(a.post_url)}" target="_blank" rel="noopener">Our write-up ↗</a>` : ""}
 			${S.admin ? `<button class="btn small danger" data-del="appearances" data-delid="${a.id}">Delete</button>` : ""}</div>
 	</div>`;
 }
 
 function renderMain() {
 	const d = S.data, pol = policy();
-	const voting = d.politicians.filter((p) => p.voting && p.status !== "incoming");
+	const voting = d.politicians.filter((p) => p.voting && p.chamber !== "executive");
 	const senate = voting.filter((p) => p.chamber === "senate"), house = voting.filter((p) => p.chamber === "house");
 	const yes = voting.filter((p) => stanceOf(p.id) === "supports").length;
+	const fresh = voting.filter((p) => p.status === "incoming");
+	const freshYes = fresh.filter((p) => stanceOf(p.id) === "supports").length;
+	const back = voting.filter((p) => p.status !== "incoming");
+	const backYes = back.filter((p) => stanceOf(p.id) === "supports").length;
+	const next = isNext();
+	const open = next ? (d.meta?.undecided || []).length : 0;
+	const leaving = voting.filter((p) => p.status === "departing");
+	const elections = [...new Set(d.politicians.map((p) => year(p.next_election)).filter(Boolean))].sort();
 	const exec = d.politicians.filter((p) => p.chamber === "executive");
 	const states = [...new Set(d.politicians.map((p) => p.state))].sort();
 	const opt = (v, l, cur) => `<option value="${h(v)}"${cur === v ? " selected" : ""}>${h(l)}</option>`;
@@ -183,9 +229,17 @@ function renderMain() {
 	<main class="wrap">
 		<section class="hero">
 			<div>
-				<div class="eyebrow">${d.policies.length > 1 ? `<select id="policy" aria-label="Policy">${d.policies.map((p) => opt(p.id, p.name, S.policy)).join("")}</select>` : h(pol.name)} · ${h([pol.bill_house, pol.bill_senate].filter(Boolean).join(" / "))}</div>
-				<h1><em>${yes}</em> of ${voting.length} are on record for ${h(pol.name)}.</h1>
+				<div class="eyebrow"><select id="congress" aria-label="Which Congress">${(d.meta?.congresses || []).map((c) => opt(String(c.id), c.label, String(S.congress))).join("")}</select> · ${d.policies.length > 1 ? `<select id="policy" aria-label="Policy">${d.policies.map((p) => opt(p.id, p.name, S.policy)).join("")}</select>` : h(pol.name)} · ${h([pol.bill_house, pol.bill_senate].filter(Boolean).join(" / "))}</div>
+				<h1><em>${yes}</em> of ${voting.length} in the ${next ? "next" : "current"} Congress are on record for ${h(pol.name)}.</h1>
 				<p>${h(pol.description || "")} Everyone else is standing in the way until they say otherwise.</p>
+				${next ? `<div class="kv split">
+					<div><b>${backYes} <small>of ${back.length}</small></b><span>Returning members on record</span></div>
+					<div><b>${freshYes} <small>of ${fresh.length}</small></b><span>Newcomers on record</span></div>
+					<div><b>${open}</b><span>House seat${open === 1 ? "" : "s"} still undecided${open ? ` (${h(d.meta.undecided.join(", "))})` : ""}</span></div>
+				</div>` : `<div class="kv split">
+					<div><b>${leaving.filter((p) => stanceOf(p.id) === "supports").length} <small>of ${leaving.length}</small></b><span>Leaving in January, on record</span></div>
+					<div><b>${voting.length - leaving.length}</b><span>Staying for the next Congress</span></div>
+				</div>`}
 			</div>
 			<div class="meters">
 				${meter("House", house, [[Math.floor(house.length / 2) + 1, `${Math.floor(house.length / 2) + 1} to pass`]])}
@@ -193,9 +247,11 @@ function renderMain() {
 				${legend()}
 			</div>
 		</section>
+		<section class="card mapcard" id="map">${mapHtml()}</section>
+		<div id="statepanel">${stateHtml()}</div>
 		<section class="chambers">
-			<div class="card"><h2>Senate</h2><p class="sub">${senate.length} seats · each dot is a senator</p>${hemicycle(senate, 5, "Senate")}</div>
-			<div class="card"><h2>House</h2><p class="sub">${house.length} voting seats filled · hover or tap a dot</p>${hemicycle(house, 11, "House")}</div>
+			<div class="card"><h2>Senate</h2><p class="sub">${senate.length} seats${next ? " from Jan 3, 2027" : " now"} · each dot is a senator</p>${hemicycle(senate, 5, "Senate")}</div>
+			<div class="card"><h2>House</h2><p class="sub">${house.length} of 435 voting seats ${next ? "decided" : "filled"} · hover or tap a dot</p>${hemicycle(house, 11, "House")}</div>
 		</section>
 		<div class="exec">${exec.map((p) => `<button class="row" style="--stance:var(--s-${stanceOf(p.id)})" data-id="${h(p.id)}">${avatar(p)}<span><span class="name">${h(p.name)}</span><br><span class="meta">${h(p.role)} · ${h(p.notes || "")}</span></span><span class="right">${pill(stanceOf(p.id))}</span></button>`).join("")}</div>
 		${d.appearances.length ? `<div class="section-title"><h2>On the record</h2><span>Latest documented appearances</span></div>
@@ -207,7 +263,9 @@ function renderMain() {
 			<select data-f="stance" aria-label="Stance">${opt("", "Any stance", S.f.stance)}${STANCE_ORDER.map((s) => opt(s, STANCE[s], S.f.stance)).join("")}</select>
 			<select data-f="party" aria-label="Party">${opt("", "Any party", S.f.party)}${Object.entries(PARTY).map(([k, v]) => opt(k, v, S.f.party)).join("")}</select>
 			<select data-f="state" aria-label="State">${opt("", "All states", S.f.state)}${states.map((s) => opt(s, s, S.f.state)).join("")}</select>
-			<select data-f="sort" aria-label="Sort">${opt("name", "Sort: name", S.f.sort)}${opt("state", "Sort: state", S.f.sort)}${opt("health", "Sort: health-industry PAC $", S.f.sort)}${opt("pacs", "Sort: all PAC $", S.f.sort)}${opt("outside", "Sort: outside spending", S.f.sort)}</select>
+			<select data-f="lean" aria-label="Lean">${opt("", "Any lean", S.f.lean)}${Object.entries(LEAN).map(([k, v]) => opt(k, v, S.f.lean)).join("")}</select>
+			<select data-f="cohort" aria-label="Cohort">${opt("", next ? "New and returning" : "Everyone", S.f.cohort)}${next ? opt("new", "New in 2027", S.f.cohort) + opt("returning", "Returning", S.f.cohort) : opt("departing", "Leaving in January", S.f.cohort)}${elections.map((y) => opt(y, `Up for re-election in ${y}`, S.f.cohort)).join("")}</select>
+			<select data-f="sort" aria-label="Sort">${opt("name", "Sort: name", S.f.sort)}${opt("election", "Sort: next election", S.f.sort)}${opt("state", "Sort: state", S.f.sort)}${opt("health", "Sort: health-industry PAC $", S.f.sort)}${opt("pacs", "Sort: all PAC $", S.f.sort)}${opt("outside", "Sort: outside spending", S.f.sort)}</select>
 			<label class="check"><input type="checkbox" id="health"${S.f.health ? " checked" : ""}> Takes health-industry PAC money</label>
 		</div>
 		<div class="list" id="list"></div>
@@ -215,10 +273,11 @@ function renderMain() {
 	${footer()}`;
 	$("#list").innerHTML = listHtml();
 }
+export const chromeOnly = () => chrome();
 export const chrome = () => `${S.admin ? `<div class="adminbar"><div class="wrap"><span>Signed in as admin — edit controls are visible on every profile.</span><span><a href="#/admin">Admin panel</a> · <a href="#" data-logout>Sign out</a></span></div></div>` : ""}
 	<div class="wrap"><header class="top"><a class="brand" href="#/">Who Stands <span>In The Way</span></a>
-	<nav><a class="btn ghost" href="#/">Dashboard</a><a class="btn" href="#/admin">${S.admin ? "Admin panel" : "Admin"}</a></nav></header></div>`;
-const footer = () => `<footer><div class="wrap">Baseline: member roster and official accounts from the <a href="https://github.com/unitedstates/congress-legislators" target="_blank" rel="noopener">congress-legislators</a> project; support = sponsors and cosponsors on <a href="https://www.congress.gov/bill/119th-congress/house-bill/3069" target="_blank" rel="noopener">congress.gov</a>; money from <a href="https://www.fec.gov/data/browse-data/?tab=bulk-data" target="_blank" rel="noopener">FEC bulk filings</a> (2025–26 cycle). "Not on record" means not a cosponsor and nothing documented yet. Everything after the baseline is maintained by hand.</div></footer>`;
+	<nav><a class="btn ghost" href="#/">Dashboard</a><a class="btn ghost" href="#/issues">Issues</a><a class="btn ghost" href="#/elections">2026 results</a><a class="btn" href="#/admin">${S.admin ? "Admin panel" : "Admin"}</a></nav></header></div>`;
+export const footer = () => `<footer><div class="wrap">Baseline: the Congress sworn in January 3, 2027, from <a href="${url(S.data.meta?.roster_source || "https://en.wikipedia.org/wiki/120th_United_States_Congress")}" target="_blank" rel="noopener">Wikipedia's 120th Congress roster</a> (checked against Wikidata); returning members' accounts from the <a href="https://github.com/unitedstates/congress-legislators" target="_blank" rel="noopener">congress-legislators</a> project; returning members' support = sponsors and cosponsors of the 119th Congress bill on <a href="https://www.congress.gov/bill/119th-congress/house-bill/3069" target="_blank" rel="noopener">congress.gov</a>; money from <a href="https://www.fec.gov/data/browse-data/?tab=bulk-data" target="_blank" rel="noopener">FEC bulk filings</a> (2025–26 cycle); lean starts from each member's voting record (<a href="https://voteview.com" target="_blank" rel="noopener">Voteview</a> DW-NOMINATE, 119th Congress) and can be overridden by hand; newcomers' stances researched from campaign statements in November 2026 and linked to their source. "Not on record" means not a cosponsor and nothing documented yet. Everything after the baseline is maintained by hand.</div></footer>`;
 
 // ------------------------------------------------------------------ profile drawer
 async function openProfile(id) {
@@ -254,7 +313,8 @@ async function openProfile(id) {
 				<p class="note">Independent expenditures: money spent on ads and mailers about this candidate, not given to them. No contribution limits.</p>` : `<p class="note">No independent expenditures reported for or against this candidate this cycle.</p>`}`;
 	}
 	dlg.innerHTML = `<div class="dhead">${avatar(p)}
-			<div style="flex:1"><h2>${h(p.name)}</h2><div class="meta"><span class="party ${h(p.party)}">${h(PARTY[p.party] || p.party)}</span> · ${h(p.role)}${p.chamber === "executive" ? "" : " · " + h(seat(p))}${p.status === "incoming" ? " · incoming" : ""}${p.term_end ? ` · term ends ${h(fmtDate(p.term_end))}` : ""}</div></div>
+			<div style="flex:1"><h2>${h(p.name)}</h2><div class="meta"><span class="party ${h(p.party)}">${h(PARTY[p.party] || p.party)}</span> · ${h(p.role)}${p.chamber === "executive" ? "" : " · " + h(seat(p))}${p.status === "incoming" ? " · new in 2027" : ""}</div>
+				<div class="meta">${p.status === "departing" ? "Leaving Congress January 3, 2027" : `${p.term_end ? `Term ends ${h(fmtDate(p.term_end))}` : ""}${p.next_election ? ` · <b>up for re-election ${h(fmtDate(p.next_election))}</b>` : ""}`}</div></div>
 			<button class="btn" data-close aria-label="Close">Close</button></div>
 		<div class="dbody">
 			<h3>Where they stand</h3>
@@ -266,7 +326,9 @@ async function openProfile(id) {
 					${S.admin ? adminProfileTools.stance(p, pl, x) : ""}</div>`;
 			}).join("")}
 			${p.notes ? `<p class="note">${h(p.notes)}</p>` : ""}
-			<h3>On the record <small>${d.appearances.length} documented</small></h3>
+			${leanBox(p)}
+			${issueMatrix(p, d.issue_positions || [])}
+			<h3>On the record <small>${d.appearances.length} documented: shows, quotes, votes, posts</small></h3>
 			<div class="feed">${d.appearances.map((a) => appHtml(a, false)).join("") || `<p class="note">No appearances documented yet.</p>`}</div>
 			${S.admin ? adminProfileTools.appearance(p) : ""}
 			<h3>Find them</h3>
@@ -304,42 +366,53 @@ function route() {
 	const hash = location.hash || "#/";
 	const dlg = $("#drawer");
 	const m = hash.match(/^#\/p\/(.+)$/);
-	if (hash.startsWith("#/admin")) { if (dlg.open) dlg.close(); renderAdmin(); return; }
-	if (!$("#list") || !m || route.dirty) renderMain();
+	// A profile opens as a drawer over whatever page was showing; other hashes pick the page.
+	const page = m ? route.back || "#/" : hash;
+	if (!m) route.back = hash;
+	if (!m || route.dirty || route.view !== page) {
+		if (page.startsWith("#/admin")) renderAdmin();
+		else if (page.startsWith("#/issues")) renderIssues();
+		else if (page.startsWith("#/elections")) renderElections(page.split("/")[2] || "");
+		else renderMain();
+		route.view = page;
+	}
 	route.dirty = false;
 	if (m) openProfile(decodeURIComponent(m[1]));
 	else if (dlg.open) dlg.close();
 }
 export const markDirty = () => (route.dirty = true);
+export const rerender = () => { markDirty(); route(); };
 
 function bind() {
 	const tip = $("#tip");
 	document.addEventListener("click", async (e) => {
 		const t = e.target;
 		if (t.closest("[data-logout]")) { e.preventDefault(); await api("logout", { method: "POST" }); toast("Signed out"); markDirty(); await refresh(); return; }
-		if (t.closest("[data-close]")) { location.hash = "#/"; return; }
+		if (t.closest("[data-close]")) { location.hash = route.back || "#/"; return; }
 		const del = t.closest("[data-del]");
 		if (del) return; // handled in admin.js
 		const el = t.closest("[data-id]");
 		if (el && !t.closest("form")) location.hash = "#/p/" + encodeURIComponent(el.dataset.id);
 	});
-	$("#drawer").addEventListener("close", () => { if (location.hash.startsWith("#/p/")) location.hash = "#/"; });
-	$("#drawer").addEventListener("click", (e) => { if (e.target === e.currentTarget) location.hash = "#/"; });
+	$("#drawer").addEventListener("close", () => { if (location.hash.startsWith("#/p/")) location.hash = route.back || "#/"; });
+	$("#drawer").addEventListener("click", (e) => { if (e.target === e.currentTarget) location.hash = route.back || "#/"; });
 	document.addEventListener("input", (e) => {
 		const t = e.target;
-		if (t.id === "q") { S.f.q = t.value; $("#list").innerHTML = listHtml(); }
+		if (t.id === "q" && $("#list")) { S.f.q = t.value; $("#list").innerHTML = listHtml(); }
 	});
 	document.addEventListener("change", (e) => {
 		const t = e.target;
-		if (t.dataset.f) { S.f[t.dataset.f] = t.value; $("#list").innerHTML = listHtml(); }
+		if (t.dataset.f && $("#list")) { S.f[t.dataset.f] = t.value; $("#list").innerHTML = listHtml(); }
 		if (t.id === "health") { S.f.health = t.checked; $("#list").innerHTML = listHtml(); }
 		if (t.id === "policy") { S.policy = t.value; indexPositions(); renderMain(); }
+		if (t.id === "congress") { S.congress = Number(t.value); S.mapState = ""; S.f.cohort = ""; applyCongress(); renderMain(); }
 	});
 	document.addEventListener("mouseover", (e) => {
-		const c = e.target.closest?.(".hemi circle");
+		const c = e.target.closest?.(".hemi circle, .seatdot[data-id]");
 		if (!c) { tip.hidden = true; return; }
 		const p = S.data.politicians.find((x) => x.id === c.dataset.id);
-		tip.innerHTML = `<b>${h(p.name)}</b> (${h(p.party)}-${h(seat(p))})<small>${h(STANCE[stanceOf(p.id)])}${p.health_total > 0 ? ` · ${short(p.health_total)} from health-industry PACs` : ""}</small>`;
+		if (!p) { tip.hidden = true; return; }
+		tip.innerHTML = `<b>${h(p.name)}</b> (${h(p.party)}-${h(seat(p))})<small>${h(STANCE[stanceOf(p.id)])}${p.lean && p.lean !== "unknown" ? ` · ${h(LEAN[p.lean])}` : ""}${p.health_total > 0 ? ` · ${short(p.health_total)} from health-industry PACs` : ""}</small>`;
 		tip.hidden = false;
 		const r = c.getBoundingClientRect();
 		tip.style.left = Math.min(Math.max(r.left + r.width / 2 - tip.offsetWidth / 2, 8), innerWidth - tip.offsetWidth - 8) + "px";
@@ -347,6 +420,7 @@ function bind() {
 	});
 	window.addEventListener("hashchange", route);
 	bindAdmin();
+	bindViews();
 }
 
 load().then(() => { bind(); route(); }).catch((e) => { $("#app").innerHTML = `<p class="loading">Couldn't load data: ${h(e.message)}</p>`; });

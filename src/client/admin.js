@@ -1,4 +1,4 @@
-import { S, STANCE, STANCE_ORDER, SIGNAL, h, api, toast, refresh, markDirty, chrome, seat, stanceOf, pill, appHtml } from "./main.js";
+import { S, STANCE, STANCE_ORDER, SIGNAL, KIND, h, api, toast, refresh, markDirty, chrome, seat, stanceOf, pill, appHtml } from "./main.js";
 
 const $ = (s, el = document) => el.querySelector(s);
 const opt = (v, l, cur) => `<option value="${h(v)}"${String(cur ?? "") === String(v) ? " selected" : ""}>${h(l)}</option>`;
@@ -13,7 +13,8 @@ const outletSelect = () => `<select name="outlet_id">${opt("", "— pick an outl
 function appearanceFields(p) {
 	return `${p ? `<input type="hidden" name="politician_id" value="${h(p.id)}">` : `<label>Politician<input type="text" name="politician_pick" list="pols" placeholder="Start typing a name…" required autocomplete="off"></label>`}
 		<div class="grid">
-			<label>Outlet${outletSelect()}</label>
+			<label>Type<select name="kind">${Object.entries(KIND).map(([k, v]) => opt(k, v, "show")).join("")}</select></label>
+			<label>Outlet / where${outletSelect()}</label>
 			${field("Date", "date", today(), "date")}
 			<label>Policy${policySelect()}</label>
 			<label>What they signaled<select name="signal">${opt("", "— not rated —", "")}${Object.entries(SIGNAL).map(([k, v]) => opt(k, v[0], "")).join("")}</select></label>
@@ -25,7 +26,8 @@ function appearanceFields(p) {
 			${field("Logo image link", "new_outlet_logo", "", "url", 'placeholder="https://"')}
 		</div>
 		${field("Headline", "title", "", "text", 'placeholder="Asked about Medicare for All on…"')}
-		${field("Link to the clip", "clip_url", "", "url", 'placeholder="https://"')}
+		<div class="grid">${field("Link to the clip, quote, vote or post", "clip_url", "", "url", 'placeholder="https://"')}
+			${field("Link to your own post about it", "post_url", "", "url", 'placeholder="https://"')}</div>
 		${area("What they said", "quote", "", "Quote or close paraphrase")}
 		${area("Your notes", "notes")}`;
 }
@@ -36,7 +38,7 @@ export const adminProfileTools = {
 			<div class="grid"><label>Stance${stanceSelect(x?.stance)}</label>${field("Source link", "source_url", x?.source_url, "url", 'placeholder="https://"')}</div>
 			${area("Why — the receipts", "note", x?.note, "e.g. Says 'access to affordable care' but dodged when asked directly")}
 			<div class="actions"><button class="btn primary">Save stance</button></div></form></details>`,
-	appearance: (p) => `<details class="admin"><summary>+ Log an appearance</summary>
+	appearance: (p) => `<details class="admin"><summary>+ Log a show, quote, vote or post</summary>
 		<form class="form" data-form="appearance">${appearanceFields(p)}<div class="actions"><button class="btn primary">Save appearance</button></div></form></details>`,
 	donor: (p) => `<details class="admin"><summary>+ Document a donor</summary>
 		<form class="form" data-form="donor"><input type="hidden" name="politician_id" value="${h(p.id)}">
@@ -61,9 +63,9 @@ function personFields(p = {}) {
 			${field("Title", "role", p.role ?? "Representative")}${field("State (2 letters)", "state", p.state, "text", 'maxlength="2"')}
 			${field("District", "district", p.district, "number", 'min="0"')}
 			<label>Party<select name="party">${opt("D", "Democrat", p.party)}${opt("R", "Republican", p.party)}${opt("I", "Independent", p.party)}</select></label>
-			<label>Status<select name="status">${opt("current", "In office now", p.status)}${opt("incoming", "Incoming (sworn in January)", p.status)}${opt("former", "Former", p.status)}</select></label>
+			<label>Status<select name="status">${opt("current", "Returning member", p.status)}${opt("incoming", "New in 2027", p.status)}${opt("former", "Former (hidden)", p.status)}</select></label>
 			<label>Has a vote?<select name="voting">${opt("1", "Yes", p.voting ?? 1)}${opt("0", "No", p.voting ?? 1)}</select></label>
-			${field("Term ends", "term_end", p.term_end, "date")}${field("Phone", "phone", p.phone)}
+			${field("Term ends", "term_end", p.term_end, "date")}${field("Next election", "next_election", p.next_election, "date")}${field("Phone", "phone", p.phone)}
 		</div><div class="grid">
 			${field("Official website", "website", p.website, "url")}${field("Contact form", "contact_form", p.contact_form, "url")}${field("Photo link", "photo_url", p.photo_url, "url")}
 			${field("Official X handle", "twitter", p.twitter)}${field("Other X handles (comma-separated)", "twitter_alt", p.twitter_alt)}
@@ -84,7 +86,7 @@ export function renderAdmin() {
 		return;
 	}
 	const d = S.data, tab = S.adminTab;
-	const tabs = [["appearance", "Log an appearance"], ["stances", "Stances"], ["outlets", "Outlets"], ["policies", "Policies"], ["people", "Add a person"]];
+	const tabs = [["appearance", "Log an entry"], ["stances", "Stances"], ["issues", "Issues & polls"], ["outlets", "Outlets"], ["policies", "Policies"], ["people", "Add a person"]];
 	let body = "";
 	if (tab === "appearance") {
 		body = `<form class="form" data-form="appearance">${appearanceFields(null)}<div class="actions"><button class="btn primary">Save appearance</button></div></form>
@@ -104,8 +106,8 @@ export function renderAdmin() {
 				<div class="actions"><button class="btn primary">Save</button>${p.is_primary ? "" : `<button type="button" class="btn danger" data-del="policies" data-delid="${h(p.id)}">Delete</button>`}</div></form></details>`).join("")}
 			<p class="note">Everyone starts as "Not on record" on a new policy. Set stances from the Stances tab or any profile.</p>`;
 	} else {
-		body = `<p class="note">For members-elect, special-election winners or anyone missing. Set status to "Incoming" and they'll appear in the list but won't count in the vote charts until you switch them to "In office now".</p>
-			<form class="form" data-form="politician-new">${personFields({ status: "incoming" })}<div class="actions"><button class="btn primary">Add person</button></div></form>`;
+		body = `<p class="note">For anyone missing, such as the winners of the undecided Louisiana seats or a future special election. Set status to "Former" to hide someone without deleting their history.</p>
+			<form class="form" data-form="politician-new">${personFields({ status: "incoming", term_end: "2029-01-03", next_election: "2028-11-07" })}<div class="actions"><button class="btn primary">Add person</button></div></form>`;
 	}
 	app.innerHTML = `${chrome()}<main class="wrap">
 		<div class="tabs" role="tablist">${tabs.map(([k, l]) => `<button role="tab" aria-selected="${k === tab}" data-tab="${k}">${l}</button>`).join("")}</div>
@@ -170,6 +172,10 @@ export function bindAdmin() {
 				await api("admin/appearances", { method: "POST", body: b });
 			}, "Appearance logged");
 		}
+		if (kind === "lean") return save(() => api("admin/lean/" + encodeURIComponent(id), { method: "PUT", body: b }), "Lean saved");
+		if (kind === "issuepos") return save(() => api("admin/issue_positions", { method: "PUT", body: b }), "Position saved");
+		if (kind === "issue") return save(() => api("admin/issues" + (id ? "/" + encodeURIComponent(id) : ""), { method: id ? "PUT" : "POST", body: b }), id ? "Issue saved" : "Issue added");
+		if (kind === "poll") return save(() => api("admin/issue_polls" + (id ? "/" + encodeURIComponent(id) : ""), { method: id ? "PUT" : "POST", body: b }), id ? "Poll saved" : "Poll added");
 		if (kind === "donor") return save(() => api("admin/donors", { method: "POST", body: b }), "Donor saved");
 		if (kind === "politician-edit") return save(() => api("admin/politicians/" + encodeURIComponent(id), { method: "PUT", body: b }), "Profile saved");
 		if (kind === "politician-new") return save(async () => { const r = await api("admin/politicians", { method: "POST", body: b }); location.hash = "#/p/" + encodeURIComponent(r.id); }, "Person added", false);
@@ -180,12 +186,13 @@ export function bindAdmin() {
 	});
 	document.addEventListener("click", async (e) => {
 		const tab = e.target.closest("[data-tab]");
+		if (tab && tab.dataset.tab === "issues") { location.hash = "#/issues"; return; }
 		if (tab) { S.adminTab = tab.dataset.tab; renderAdmin(); return; }
 		const del = e.target.closest("[data-del]");
 		if (del) {
 			e.preventDefault();
 			e.stopPropagation();
-			const what = { politicians: "this person and everything logged for them", outlets: "this outlet", policies: "this policy and every stance recorded on it", appearances: "this appearance", donors: "this donor entry" }[del.dataset.del];
+			const what = { issues: "this issue, its polls and every position recorded on it", issue_polls: "this poll", politicians: "this person and everything logged for them", outlets: "this outlet", policies: "this policy and every stance recorded on it", appearances: "this appearance", donors: "this donor entry" }[del.dataset.del];
 			if (!confirm(`Delete ${what}? This can't be undone.`)) return;
 			const person = del.dataset.del === "politicians";
 			if (person) location.hash = "#/";
