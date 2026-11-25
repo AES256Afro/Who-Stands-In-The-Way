@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "who-stands-in-the-way",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["cf", "dev", "--port", "5173"],
+      "port": 5173
+    }
+  ]
+}
