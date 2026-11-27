@@ -37,7 +37,7 @@ for p in people.values():
         by_last[(p.get("state"), nm[-1])].append(p)
 
 
-def find(name, st="TX", level=None, chamber=None):
+def find(name, st="TX", level=None, chamber=None, seated=False):
     """One person by name in a state; None when missing or ambiguous."""
     name = re.sub(r"\(.*?\)|^(?:Mr|Ms|Mrs|Dr|Rep|Sen)\.?\s+|\s+of\s+[A-Z][a-z]+(?:\s[A-Z][a-z]+)?$", "", name.strip())
     if "," in name:  # "Jones, Venton" / "Gonzalez, J."
@@ -49,6 +49,8 @@ def find(name, st="TX", level=None, chamber=None):
     cands = list(by_last.get((st, w[-1]), []))
     if level:
         cands = [p for p in cands if (p.get("level") or "federal") == level]
+    if seated:  # past bills and votes: only people who held office then, not members-elect
+        cands = [p for p in cands if p.get("status") != "incoming"]
     if chamber:
         cands = [p for p in cands if p.get("chamber") == chamber] or cands
     if len(cands) > 1 and len(w) > 1:
@@ -201,7 +203,7 @@ if mx.exists():
         if not URL.match(b.get("url") or ""):
             continue
         for name in b.get("authors", []):
-            p = find(name, level="state", chamber="state_" + b["chamber"] if b.get("chamber") in ("upper", "lower") else None)
+            p = find(name, level="state", chamber="state_" + b["chamber"] if b.get("chamber") in ("upper", "lower") else None, seated=True)
             if p:
                 add(p, "medicaid_exp", "supports", f"author or coauthor of {b.get('bill')} ({b.get('session', '')}), {b.get('title') or 'to expand Medicaid'}.", b["url"])
             else:
@@ -211,7 +213,7 @@ if mx.exists():
             continue
         for side, stance in (("yes", "supports"), ("no", "opposes")):
             for name in v.get(side, []):
-                p = find(name, level="state", chamber="state_" + v["chamber"] if v.get("chamber") in ("upper", "lower") else None)
+                p = find(name, level="state", chamber="state_" + v["chamber"] if v.get("chamber") in ("upper", "lower") else None, seated=True)
                 if p:
                     add(p, "medicaid_exp", stance, f"voted {side} on {v.get('description')} ({v.get('date', '')}).", v["url"])
                 else:
