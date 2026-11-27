@@ -277,13 +277,21 @@ export function zipBox(compact) {
 	</form>`;
 }
 
-const ASK = "support the Medicare for All Act (H.R.3069 / S.1506) and cosponsor it when it is reintroduced in the new Congress";
+const ASK_FED = "support the Medicare for All Act (H.R.3069 / S.1506) and cosponsor it when it is reintroduced in the new Congress";
+// State officials carry their stance on the record itself (from /api/state); federal ones come from S.pos.
+const stanceFor = (p) => p.stance || stanceOf(p.id);
 function script(p, zip) {
-	const st = stanceOf(p.id), title = p.chamber === "senate" ? "Senator" : "Representative";
+	const st = stanceFor(p);
+	const stateLevel = p.chamber === "governor" || p.chamber === "state_upper" || p.chamber === "state_lower";
+	const title = p.chamber === "governor" ? (p.state === "DC" ? "Mayor" : "Governor") : p.chamber === "senate" || p.chamber === "state_upper" ? "Senator" : "Representative";
 	const who = `${title} ${p.last || p.name}`;
-	const open = `Hi, my name is [your name] and I'm a constituent from ZIP code ${zip}. I'm calling about Medicare for All.`;
+	const place = STATE_NAMES[p.state] || p.state;
+	const ASK = stateLevel
+		? (p.chamber === "governor" ? `back single-payer health care for ${place} and sign a single-payer bill if the legislature passes one` : `sponsor and vote for single-payer health care legislation in ${place}`)
+		: ASK_FED;
+	const open = `Hi, my name is [your name] and I'm a constituent from ZIP code ${zip}. I'm calling about ${stateLevel ? "single-payer health care" : "Medicare for All"}.`;
 	const body = {
-		supports: `I want to thank ${who} for supporting Medicare for All. Please keep fighting for it, and cosponsor the bill again as soon as it's reintroduced.`,
+		supports: stateLevel ? `I want to thank ${who} for supporting single-payer health care. Please keep fighting for it.` : `I want to thank ${who} for supporting Medicare for All. Please keep fighting for it, and cosponsor the bill again as soon as it's reintroduced.`,
 		public_option: `I know ${who} has backed a public option. A public option isn't enough. I'm asking ${who} to ${ASK}.`,
 		unclear: `I haven't been able to find a clear answer on where ${who} stands. I'm asking ${who} to ${ASK}. Can you tell me their position?`,
 		opposes: `I'm disappointed that ${who} has opposed Medicare for All. Everyone deserves health care without bills or networks. I'm asking ${who} to ${ASK}.`,
@@ -293,11 +301,11 @@ function script(p, zip) {
 }
 
 function memberCard(p, zip, share) {
-	const st = stanceOf(p.id);
+	const st = stanceFor(p);
 	const sc = script(p, zip);
 	return `<article class="card zipcard" style="--stance:var(--s-${st})">
 		<div class="zhead">${avatar(p)}<div><a class="name" href="#/p/${h(p.id)}">${h(p.name)}</a>
-			<div class="meta"><span class="party ${h(p.party)}">${h(PARTY[p.party] || p.party)}</span> · ${p.chamber === "senate" ? `Senator, ${h(STATE_NAMES[p.state] || p.state)}` : `${h(seat(p))}${share && share < 100 ? ` · covers ${share}% of this ZIP` : ""}`}${p.status === "incoming" ? ` · <span class="tag new">New</span>` : ""}</div></div></div>
+			<div class="meta"><span class="party ${h(p.party)}">${h(PARTY[p.party] || p.party)}</span> · ${p.chamber === "senate" ? `Senator, ${h(STATE_NAMES[p.state] || p.state)}` : p.chamber === "governor" ? `${h(p.role)}, ${h(STATE_NAMES[p.state] || p.state)}` : `${h(seat(p))}${share && share < 100 ? ` · covers ${share}% of this ZIP` : ""}`}${p.status === "incoming" ? ` · <span class="tag new">New</span>` : ""}</div></div></div>
 		<div class="zstance">${pill(st)}</div>
 		<div class="links">${p.phone ? `<a class="btn primary call" href="tel:+1${h(String(p.phone).replace(/\D/g, ""))}">📞 Call ${h(p.phone)}</a>` : ""}<a class="btn small" href="#/p/${h(p.id)}">Full profile</a><button type="button" class="btn small" data-card="${h(p.id)}">🖼 Share card</button></div>
 		${p.phone_label ? `<p class="note">${h(p.phone_label)}</p>` : ""}
@@ -324,11 +332,14 @@ export async function renderZip(zip) {
 					${split ? `<p class="lede">Your ZIP code crosses ${hit.length} House districts, so we show each one. To be sure which is yours, check your street address with your state's election office or the <a href="https://www.house.gov/representatives/find-your-representative" target="_blank" rel="noopener">House's lookup ↗</a>; note that it shows the current districts until January 3.</p>` : ""}
 					${sens.length ? `<h3 class="mini">Senators</h3><div class="zipgrid">${sens.map((p) => memberCard(p, zip)).join("")}</div>` : `<p class="note">${h(STATE_NAMES[state] || state)} has no senators.</p>`}
 					<h3 class="mini">House</h3><div class="zipgrid">${reps.map((r) => r.p ? memberCard(r.p, zip, r.share) : `<article class="card zipcard"><b>${h(r.st)}-${r.d || "AL"}</b><p class="note">This seat is still undecided${split ? ` (covers ${r.share}% of this ZIP)` : ""}.</p></article>`).join("")}</div>
-					<p class="note">Districts are matched by the share of the ZIP code's area inside each one (Census ZIP areas and 2027 district lines). New members' direct lines are assigned after January 3; until then their call button goes to the Capitol switchboard.</p>`;
+					<p class="note">Districts are matched by the share of the ZIP code's area inside each one (Census ZIP areas and 2027 district lines). New members' direct lines are assigned after January 3; until then their call button goes to the Capitol switchboard.</p>
+					<div id="zipstate" data-st="${h(state)}"><p class="note">Loading your state officials…</p></div>`;
 			}
 		}
 	}
 	$("#app").innerHTML = `${chrome()}<main class="wrap"><section class="card zippage">${zipBox()}</section><div id="zipresult">${body}</div></main>${footer()}`;
+	const box = $("#zipstate");
+	if (box) stateReps(box, zip, box.dataset.st);
 	if (!zip) $("#zipq")?.focus();
 }
 
@@ -466,4 +477,30 @@ export async function drawDistricts() {
 	} catch (e) {
 		el.innerHTML = `<p class="note">The district map couldn't load. The state view still works.</p>`;
 	}
+}
+
+// ------------------------------------------------------------------ state officials for a ZIP
+const zsCache = {};
+async function zipStateData(zip) {
+	const k = zip[0];
+	if (!zsCache[k]) { const r = await fetch(`/zipstate/${k}.json`); zsCache[k] = r.ok ? await r.json() : {}; }
+	return zsCache[k][zip] || null;
+}
+async function stateReps(box, zip, st) {
+	let hit = null, people = [];
+	try { [hit, people] = await Promise.all([zipStateData(zip), api("state/" + encodeURIComponent(st))]); } catch { box.innerHTML = ""; return; }
+	const govs = people.filter((p) => p.chamber === "governor" && p.status !== "departing");
+	const pick = (kind) => (hit?.[kind] || []).map(([labels, share]) => ({ share, people: people.filter((p) => p.chamber === (kind === "u" ? "state_upper" : "state_lower") && labels.includes(p.sdistrict)) }));
+	const upper = pick("u"), lower = pick("l");
+	// DC's at-large council members and chair represent every ward.
+	const citywide = st === "DC" ? people.filter((p) => p.chamber === "state_upper" && /at.?large|chair/i.test(p.sdistrict || "")) : [];
+	const cards = (groups) => groups.flatMap((g) => g.people.map((p) => memberCard(p, zip, g.share))).join("");
+	const any = upper.some((g) => g.people.length) || lower.some((g) => g.people.length);
+	const name = STATE_NAMES[st] || st;
+	box.innerHTML = `<div class="section-title"><h2>Your state officials</h2><span>${h(name)} · <a href="#/state/${h(st)}">all ${h(name)} officials</a></span></div>
+		${govs.length ? `<h3 class="mini">${st === "DC" ? "Mayor" : "Governor"}</h3><div class="zipgrid">${govs.map((p) => memberCard(p, zip)).join("")}</div>` : ""}
+		${upper.some((g) => g.people.length) || citywide.length ? `<h3 class="mini">${st === "DC" ? "D.C. Council" : st === "NE" ? "Legislature (unicameral)" : "State Senate"}</h3><div class="zipgrid">${cards(upper)}${citywide.map((p) => memberCard(p, zip)).join("")}</div>` : ""}
+		${lower.some((g) => g.people.length) ? `<h3 class="mini">State House / Assembly</h3><div class="zipgrid">${cards(lower)}</div>` : ""}
+		${!any && !citywide.length ? `<p class="note">We couldn't place this ZIP in a state legislative district. <a href="#/state/${h(st)}">Browse ${h(name)}'s legislators</a> instead.</p>` : ""}
+		<p class="note">State districts are matched the same way, from Census 2026 state legislative boundaries; a ZIP that crosses lines lists everyone it touches. Legislators are as seated now (Open States); members elected in November 2026 appear as that data updates. A few New Hampshire "floterial" seats can't be placed by ZIP.</p>`;
 }

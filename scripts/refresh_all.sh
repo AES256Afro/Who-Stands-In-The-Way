@@ -27,4 +27,5 @@ python3 scripts/build_seed.py
 python3 scripts/money_network.py
 python3 scripts/vote_records.py
 .venv/bin/python scripts/zip_lookup.py
+.venv/bin/python scripts/state_zip_lookup.py
 python3 scripts/check_refresh.py "${TMPDIR:-/tmp}/seed.previous.json" seed/seed.json
