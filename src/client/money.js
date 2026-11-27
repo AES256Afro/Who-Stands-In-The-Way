@@ -17,7 +17,7 @@ const KIND = { person: "Person", organization: "Company or nonprofit", committee
 
 // ------------------------------------------------------------------ charts (D3 + d3-sankey, loaded on demand)
 let d3p = null;
-function loadD3() {
+export function loadD3() {
 	const add = (src) => new Promise((res, rej) => { const s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
 	d3p ??= add("https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js").then(() => add("https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js"));
 	return d3p;

@@ -1,4 +1,5 @@
 import { S, h, url, api, toast, chrome, footer, seat, stanceOf, pill, avatar, STANCE, STANCE_ORDER, PARTY, year, fmtDate, isNext, congressLabel } from "./main.js";
+import { loadD3 } from "./money.js";
 
 const $ = (s, el = document) => el.querySelector(s);
 
@@ -82,10 +83,12 @@ export function mapHtml() {
 	const extra = members().filter((p) => !TILES[p.state]);
 	return `<div class="maphead">
 			<div><h2>Who holds the seats</h2><p class="sub">${h(congressLabel())} · each state shows its 2 senators (big dots) and House seats (small dots). Tap a state for its members, or a dot for a profile.</p></div>
-			<label class="check">Color by <select id="mapmode">${Object.entries(MODES).map(([k, v]) => `<option value="${k}"${S.mapMode === k ? " selected" : ""}>${v}</option>`).join("")}</select></label>
+			<span class="links"><label class="check">View <select id="mapview"><option value="states"${S.mapView !== "districts" ? " selected" : ""}>States</option><option value="districts"${S.mapView === "districts" ? " selected" : ""}>House districts</option></select></label>
+			<label class="check">Color by <select id="mapmode">${Object.entries(MODES).map(([k, v]) => `<option value="${k}"${S.mapMode === k ? " selected" : ""}>${v}</option>`).join("")}</select></label></span>
 		</div>
 		<div class="mapmeters">${partyBar(sen, 100, "Senate")}${partyBar(house, 435, "House")}</div>
-		<div class="tilemap">${tiles}</div>
+		${S.mapView === "districts" ? `<div id="distmap" class="distmap"><p class="note">Drawing the 2027 district lines…</p></div>
+			<p class="note">Every House district as drawn for the Congress sworn in January 3, 2027 (Census TIGER 2026 boundaries). Hover for the member, click to open their profile.${isNext() ? "" : " District lines and members shown are the 2027 ones."} Territories' delegates are listed below.</p>` : `<div class="tilemap">${tiles}</div>`}
 		<div class="legend">${legendHtml()}</div>
 		${extra.length ? `<p class="note">Non-voting delegates: ${extra.map((p) => `<a href="#/p/${h(p.id)}">${h(p.name)} (${h(p.state)})</a>`).join(", ")}</p>` : ""}`;
 }
@@ -239,7 +242,11 @@ export function bindViews() {
 		if (t && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); pick(t.dataset.state); }
 	});
 	document.addEventListener("change", (e) => {
-		if (e.target.id === "mapmode") { S.mapMode = e.target.value; $("#map").innerHTML = mapHtml(); }
+		if (e.target.id === "mapmode" || e.target.id === "mapview") {
+			if (e.target.id === "mapmode") S.mapMode = e.target.value; else S.mapView = e.target.value;
+			$("#map").innerHTML = mapHtml();
+			if (S.mapView === "districts") drawDistricts();
+		}
 		if (e.target.id === "elecstate") location.hash = "#/elections" + (e.target.value ? "/" + e.target.value : "");
 	});
 }
@@ -428,4 +435,35 @@ export function renderVotes() {
 		<div class="kvotes-list">${body || `<p class="empty">No key votes yet.</p>`}</div>
 		<p class="note">Votes from <a href="https://voteview.com" target="_blank" rel="noopener">Voteview</a>, checked against the official Senate and House Clerk roll calls. Descriptions are written from the official vote text. Totals are the official counts; the name lists and party splits leave out a few members who have since left Congress, and show each member's current party.</p>
 	</main>${footer()}`;
+}
+
+// ------------------------------------------------------------------ district map (real 2027 boundaries)
+let geoP = null;
+export async function drawDistricts() {
+	const el = document.getElementById("distmap");
+	if (!el) return;
+	try {
+		geoP ??= fetch("/geo/districts.json").then((r) => r.json());
+		const [geo] = await Promise.all([geoP, loadD3()]);
+		const d3 = window.d3;
+		const W = Math.max(el.clientWidth, 600), H = Math.round(W * 0.62);
+		const fc = { type: "FeatureCollection", features: geo.states.map((x) => ({ type: "Feature", geometry: x.g })) };
+		const proj = d3.geoAlbersUsa().fitSize([W, H], fc);
+		const path = d3.geoPath(proj);
+		const pool = next120().filter((p) => p.chamber === "house");
+		const who = new Map(pool.map((p) => [`${p.state}-${p.district || 0}`, p]));
+		const svg = d3.create("svg").attr("viewBox", `0 0 ${W} ${H}`).attr("class", "dsvg").attr("role", "img").attr("aria-label", "Map of 2027 House districts");
+		// Neutral state fills underneath, so slivers between separately simplified districts don't show as holes.
+		svg.append("g").selectAll("path").data(geo.states).join("path").attr("d", (d) => path(d.g)).attr("class", "stbase");
+		svg.append("g").selectAll("path").data(geo.districts).join("path")
+			.attr("d", (d) => path(d.g)).attr("class", "dist")
+			.attr("fill", (d) => { const p = who.get(`${d.st}-${d.d}`); return p ? color(p) : "var(--s-unknown)"; })
+			.attr("data-id", (d) => who.get(`${d.st}-${d.d}`)?.id || null)
+			.attr("data-label", (d) => d.id);
+		svg.append("g").selectAll("path").data(geo.states).join("path").attr("d", (d) => path(d.g)).attr("class", "stline");
+		el.innerHTML = "";
+		el.appendChild(svg.node());
+	} catch (e) {
+		el.innerHTML = `<p class="note">The district map couldn't load. The state view still works.</p>`;
+	}
 }

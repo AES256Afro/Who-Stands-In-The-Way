@@ -313,3 +313,11 @@ h4.mini { font: 600 12.5px var(--sans); color: var(--ink-3); text-transform: upp
 .chg time { color: var(--ink-3); font-size: 13px; font-variant-numeric: tabular-nums; }
 .chg .arrow { color: var(--ink-3); margin: 0 2px; }
 @media (max-width: 560px) { .chg { grid-template-columns: 1fr; gap: 2px; } }
+
+/* district map */
+.distmap { width: 100%; margin: 8px 0; }
+.dsvg { width: 100%; height: auto; display: block; }
+.dsvg path.dist { stroke: var(--surface); stroke-width: .4; cursor: pointer; }
+.dsvg path.dist:hover { stroke: var(--ink); stroke-width: 1.5; }
+.dsvg path.stbase { fill: var(--surface-2); stroke: none; }
+.dsvg path.stline { fill: none; stroke: var(--bg); stroke-width: 1.2; pointer-events: none; }

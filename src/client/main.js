@@ -3,7 +3,7 @@ import { shareButtons, bindShare } from "./share.js";
 import { renderMoney, alignmentBox, moneyWeb, votingRecord, bindMoney } from "./money.js";
 import { xSection, bindX } from "./xposts.js";
 import { renderChanges, profileHistory, recentStrip, bindChanges } from "./changes.js";
-import { mapHtml, stateHtml, renderIssues, renderElections, issueMatrix, leanBox, LEAN, bindViews, zipBox, renderZip, bindZip, votesBox, renderVotes, voteScore } from "./views.js";
+import { mapHtml, stateHtml, renderIssues, renderElections, issueMatrix, leanBox, LEAN, bindViews, zipBox, renderZip, bindZip, votesBox, renderVotes, voteScore, drawDistricts } from "./views.js";
 
 export const STANCE = {
 	supports: "Supports",
@@ -290,6 +290,7 @@ function renderMain() {
 	${footer()}`;
 	$("#list").innerHTML = listHtml();
 	recentStrip($("#recent"));
+	if (S.mapView === "districts") drawDistricts();
 }
 export const chromeOnly = () => chrome();
 export const chrome = () => `${S.admin ? `<div class="adminbar"><div class="wrap"><span>Signed in as admin — edit controls are visible on every profile.</span><span><a href="#/admin">Admin panel</a> · <a href="#" data-logout>Sign out</a></span></div></div>` : ""}
@@ -470,7 +471,7 @@ function bind() {
 		if (t.id === "congress") { S.congress = Number(t.value); S.mapState = ""; S.f.cohort = ""; applyCongress(); renderMain(); }
 	});
 	document.addEventListener("mouseover", (e) => {
-		const c = e.target.closest?.(".hemi circle, .seatdot[data-id]");
+		const c = e.target.closest?.(".hemi circle, .seatdot[data-id], path.dist[data-id]");
 		if (!c) { tip.hidden = true; return; }
 		const p = S.data.politicians.find((x) => x.id === c.dataset.id);
 		if (!p) { tip.hidden = true; return; }
