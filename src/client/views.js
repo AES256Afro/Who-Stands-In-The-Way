@@ -292,7 +292,7 @@ function memberCard(p, zip, share) {
 		<div class="zhead">${avatar(p)}<div><a class="name" href="#/p/${h(p.id)}">${h(p.name)}</a>
 			<div class="meta"><span class="party ${h(p.party)}">${h(PARTY[p.party] || p.party)}</span> · ${p.chamber === "senate" ? `Senator, ${h(STATE_NAMES[p.state] || p.state)}` : `${h(seat(p))}${share && share < 100 ? ` · covers ${share}% of this ZIP` : ""}`}${p.status === "incoming" ? ` · <span class="tag new">New</span>` : ""}</div></div></div>
 		<div class="zstance">${pill(st)}</div>
-		<div class="links">${p.phone ? `<a class="btn primary call" href="tel:+1${h(String(p.phone).replace(/\D/g, ""))}">📞 Call ${h(p.phone)}</a>` : ""}<a class="btn small" href="#/p/${h(p.id)}">Full profile</a></div>
+		<div class="links">${p.phone ? `<a class="btn primary call" href="tel:+1${h(String(p.phone).replace(/\D/g, ""))}">📞 Call ${h(p.phone)}</a>` : ""}<a class="btn small" href="#/p/${h(p.id)}">Full profile</a><button type="button" class="btn small" data-card="${h(p.id)}">🖼 Share card</button></div>
 		${p.phone_label ? `<p class="note">${h(p.phone_label)}</p>` : ""}
 		<details class="script"><summary>What to say</summary><p class="sc">${h(sc)}</p><button type="button" class="btn small" data-copy="${h(sc)}">Copy script</button></details>
 	</article>`;

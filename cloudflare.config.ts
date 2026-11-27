@@ -8,7 +8,7 @@ export default defineConfig({
 		entrypoint,
 		assets: {
 			notFoundHandling: "single-page-application",
-			runWorkerFirst: ["/api/*"],
+			runWorkerFirst: ["/api/*", "/m/*"],
 		},
 		env: {
 			DB: bindings.d1({ name: "who-stands-in-the-way" }),

@@ -270,3 +270,6 @@ table.races .n { white-space: nowrap; }
 .zipcard .btn.call { font-size: 15px; }
 details.script summary { cursor: pointer; font-weight: 600; font-size: 14px; }
 details.script .sc { background: var(--surface-2); border-radius: 8px; padding: 10px 12px; font-size: 14.5px; line-height: 1.55; margin: 8px 0; }
+
+/* share */
+.sharebar { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0; }

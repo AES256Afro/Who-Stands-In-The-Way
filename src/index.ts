@@ -300,9 +300,54 @@ async function admin(req, env, parts) {
 	return fail(405, "Method not allowed");
 }
 
+// ---------------------------------------------------------------- share links: /m/<id>
+// Link previews (X, Facebook, iMessage...) read these tags; people are sent on to the profile.
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const STANCE_LINE = {
+	supports: "supports Medicare for All", public_option: "backs only a public option, not Medicare for All",
+	unclear: "is wishy-washy on Medicare for All", opposes: "opposes Medicare for All",
+	unknown: "has no public position on Medicare for All yet",
+};
+async function sharePage(req, env, id) {
+	const origin = new URL(req.url).origin;
+	const p = await env.DB.prepare(`SELECT p.id, p.name, p.role, p.state, p.district, p.chamber, p.party, p.phone,
+		(SELECT stance FROM positions WHERE politician_id = p.id AND policy_id = 'm4a') AS stance,
+		COALESCE(json_extract(f.data,'$.health_total'),0) + COALESCE((SELECT SUM(json_extract(value,'$.health_total'))
+			FROM json_each(json_extract(f.data,'$.leadership'))),0) AS health, json_extract(f.data,'$.employees.total') AS emp
+		FROM politicians p LEFT JOIN finance f ON f.politician_id = p.id WHERE p.id = ?`).bind(id).first();
+	const target = p ? `${origin}/#/p/${encodeURIComponent(p.id)}` : `${origin}/`;
+	const where = p ? (p.chamber === "senate" ? `Senator, ${p.state}` : p.chamber === "house" ? `${p.state}-${p.district || "AL"}` : p.role) : "";
+	const title = p ? `${p.name} ${STANCE_LINE[p.stance || "unknown"]}` : "Who Stands In The Way";
+	const money = (n) => "$" + Math.round(n || 0).toLocaleString("en-US");
+	const bits = [];
+	if (p && (p.health || 0) > 0) bits.push(`${money(p.health)} from health-industry PACs`);
+	if (p && (p.emp || 0) > 0) bits.push(`${money(p.emp)} from health-industry employees`);
+	const desc = p ? `${p.party}-${where}. ${bits.join(" · ")}${bits.length ? ". " : ""}${p.phone ? `Call ${p.phone}. ` : ""}See the record and who funds them.`
+		: "Where every member of Congress stands on Medicare for All.";
+	const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>${esc(title)}</title>
+<meta name="description" content="${esc(desc)}">
+<meta property="og:type" content="profile"><meta property="og:site_name" content="Who Stands In The Way">
+<meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(desc)}">
+<meta property="og:url" content="${esc(origin + "/m/" + encodeURIComponent(id))}">
+<meta property="og:image" content="${esc(origin)}/og.png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="${esc(title)}">
+<meta name="twitter:description" content="${esc(desc)}"><meta name="twitter:image" content="${esc(origin)}/og.png">
+<meta http-equiv="refresh" content="0;url=${esc(target)}"><link rel="canonical" href="${esc(target)}">
+</head><body style="font-family:system-ui;background:#111214;color:#f1f0ec;padding:40px">
+<p>${esc(title)}. <a style="color:#7fd3c4" href="${esc(target)}">Open the profile</a>.</p>
+<script>location.replace(${JSON.stringify(target)})</script></body></html>`;
+	return new Response(html, { status: p ? 200 : 404, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=300" } });
+}
+
 export default {
 	async fetch(req, env) {
 		const url = new URL(req.url);
+		if (url.pathname.startsWith("/m/")) {
+			ready ??= init(env.DB).catch((e) => { ready = null; throw e; });
+			await ready;
+			return sharePage(req, env, decodeURIComponent(url.pathname.slice(3)).split("/")[0]);
+		}
 		if (!url.pathname.startsWith("/api/")) return new Response("Not found", { status: 404 });
 		try {
 			ready ??= init(env.DB).catch((e) => { ready = null; throw e; });
@@ -313,6 +358,17 @@ export default {
 			if (parts[0] === "races" && req.method === "GET") {
 				const r = await env.DB.prepare("SELECT * FROM races ORDER BY chamber DESC, state, district").all();
 				return json(r.results.map((x) => ({ ...x, candidates: JSON.parse(x.candidates || "[]"), exit_polls: JSON.parse(x.exit_polls || "[]") })));
+			}
+			if (parts[0] === "photo" && parts[1] && req.method === "GET") {
+				// Same-origin copy of a member's photo so share cards can draw it (some photo hosts send
+				// no CORS header on redirects). Only the hosts the baseline uses are fetched.
+				const row = await env.DB.prepare("SELECT photo_url FROM politicians WHERE id = ?").bind(parts[1]).first();
+				const src = row?.photo_url || "";
+				if (!/^https:\/\/(unitedstates\.github\.io|commons\.wikimedia\.org|upload\.wikimedia\.org)\//.test(src)) return fail(404, "No photo");
+				const r = await fetch(src, { headers: { "user-agent": "who-stands-in-the-way/1.0" }, cf: { cacheTtl: 86400, cacheEverything: true } });
+				const type = r.headers.get("content-type") || "";
+				if (!r.ok || !type.startsWith("image/")) return fail(404, "No photo");
+				return new Response(r.body, { headers: { "content-type": type, "cache-control": "public, max-age=86400" } });
 			}
 			if (parts[0] === "politicians" && parts[1] && req.method === "GET") {
 				const p = await profile(env.DB, parts[1]);

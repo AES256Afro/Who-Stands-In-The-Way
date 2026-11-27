@@ -1,4 +1,5 @@
 import { renderAdmin, adminProfileTools, bindAdmin } from "./admin.js";
+import { shareButtons, bindShare } from "./share.js";
 import { mapHtml, stateHtml, renderIssues, renderElections, issueMatrix, leanBox, LEAN, bindViews, zipBox, renderZip, bindZip } from "./views.js";
 
 export const STANCE = {
@@ -344,6 +345,7 @@ async function openProfile(id) {
 				<div class="meta">${p.status === "departing" ? "Leaving Congress January 3, 2027" : `${p.term_end ? `Serving ${p.status === "incoming" || p.chamber === "house" ? "Jan 3, 2027" : "now"} – ${h(fmtDate(p.term_end))}` : ""}${p.next_election ? ` · <b>next election ${h(fmtDate(p.next_election))}</b>` : ""}`}</div></div>
 			<div class="links dact">${callBtn(p, "btn primary call")}<button class="btn" data-close aria-label="Close">Close</button></div></div>
 		<div class="dbody">
+			${shareButtons(p.id)}
 			<h3>Where they stand</h3>
 			${S.data.policies.map((pl) => {
 				const x = pos[pl.id], st = x?.stance || "unknown";
@@ -463,6 +465,7 @@ function bind() {
 	bindAdmin();
 	bindViews();
 	bindZip();
+	bindShare();
 }
 
 load().then(() => { bind(); route(); }).catch((e) => { $("#app").innerHTML = `<p class="loading">Couldn't load data: ${h(e.message)}</p>`; });
