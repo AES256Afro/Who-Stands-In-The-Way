@@ -163,17 +163,45 @@ for g in load("governors*.json"):
                           "note": "Researched Nov 2026: " + note + low, "source_url": g["source_url"], "updated_at": TODAY})
 
 # State single-payer bills: sponsors and cosponsors count as support for single payer in their state.
+NICK = {"dave": "david", "bob": "robert", "rob": "robert", "bill": "william", "will": "william", "joe": "joseph",
+        "mike": "michael", "jim": "james", "jimmy": "james", "tom": "thomas", "chris": "christopher", "dan": "daniel",
+        "danny": "daniel", "pat": "patrick", "nick": "nicholas", "tony": "anthony", "liz": "elizabeth", "beth": "elizabeth",
+        "kate": "katherine", "katie": "katherine", "sam": "samuel", "steve": "steven", "matt": "matthew", "al": "albert",
+        "jen": "jennifer", "jenn": "jennifer", "ed": "edward", "ted": "edward", "andy": "andrew", "greg": "gregory"}
+
+
+def same_given(a, b):
+    """First names that refer to the same person: equal, one a prefix of the other, or a common nickname."""
+    if not a or not b:
+        return False
+    return a == b or a.startswith(b) or b.startswith(a) or NICK.get(a, a) == NICK.get(b, b)
+
+
 sponsor_hits = collections.Counter()
+sponsor_misses = []
+legislators = collections.defaultdict(list)
+for x in people:
+    if x["chamber"] in ("state_upper", "state_lower"):
+        legislators[x["state"]].append(x)
 for b in load("bills*.json"):
     st = b.get("state")
     if not st or not re.match(r"https?://", b.get("url") or ""):
         continue
     for name in b.get("sponsors", []):
-        last = slug(re.sub(r"\b(jr|sr|ii|iii|iv)\b\.?", "", name, flags=re.I).split()[-1]) if name.split() else ""
-        cands = [x for x in by_state_last.get((st, last), []) if x["chamber"] in ("state_upper", "state_lower")]
-        if b.get("chamber") in ("upper", "lower"):
+        # Match on the surname (which may be several words, e.g. "Bichotte Hermelyn"), then narrow by first name,
+        # then by the bill's chamber. Bills list members of the other chamber too (senators signing House bills).
+        full = slug(re.sub(r'\b(jr|sr|ii|iii|iv)\b\.?|"[^"]*"|,', " ", name, flags=re.I))
+        if not full:
+            continue
+        cands = [x for x in legislators.get(st, []) if full == slug(x["last"]) or full.endswith("-" + slug(x["last"]))]
+        first = full.split("-")[0]
+        same_first = [x for x in cands if same_given(first, slug(x["first"]).split("-")[0]) or same_given(first, slug(x["name"]).split("-")[0])]
+        if len(same_first) == 1:
+            cands = same_first
+        elif len(cands) > 1 and b.get("chamber") in ("upper", "lower"):
             cands = [x for x in cands if x["chamber"] == "state_" + b["chamber"]] or cands
         if len(cands) != 1:
+            sponsor_misses.append(f"{st} {b.get('bill')}: {name} ({len(cands)} candidates)")
             continue  # ambiguous or not found: don't guess
         m = cands[0]
         if any(p["politician_id"] == m["id"] for p in positions):
@@ -187,3 +215,4 @@ out = {"generated": TODAY, "openstates_note": "Open States people data (CC0)", "
 (RAW / "state_officials.json").write_text(json.dumps(out))
 print("people", len(people), collections.Counter((x["chamber"], x["status"]) for x in people if x["chamber"] == "governor"))
 print("positions", collections.Counter(p["stance"] for p in positions), "sponsor matches by state", dict(sponsor_hits))
+print("sponsors not matched (skipped):", len(sponsor_misses), *sponsor_misses, sep="\n  ")
