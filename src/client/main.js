@@ -3,6 +3,7 @@ import { shareButtons, bindShare } from "./share.js";
 import { renderMoney, alignmentBox, moneyWeb, votingRecord, bindMoney } from "./money.js";
 import { xSection, bindX } from "./xposts.js";
 import { renderChanges, profileHistory, recentStrip, bindChanges } from "./changes.js";
+import { renderStates, renderState, bindStates, stateName } from "./states.js";
 import { mapHtml, stateHtml, renderIssues, renderElections, issueMatrix, leanBox, LEAN, bindViews, zipBox, renderZip, bindZip, votesBox, renderVotes, voteScore, drawDistricts } from "./views.js";
 
 export const STANCE = {
@@ -45,7 +46,8 @@ export const h = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp
 export const url = (u) => (/^https?:\/\//i.test(u || "") ? h(u) : "#");
 export const money = (n) => (n == null ? "—" : "$" + Math.round(n).toLocaleString("en-US"));
 export const short = (n) => (n >= 1e6 ? "$" + (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e3 ? "$" + Math.round(n / 1e3) + "k" : "$" + Math.round(n || 0));
-export const seat = (p) => (p.chamber === "executive" ? p.role : `${p.state}${p.chamber === "house" && p.district ? "-" + p.district : p.chamber === "house" ? "-AL" : ""}`);
+export const seat = (p) => (p.chamber === "governor" ? `${p.role}, ${p.state}` : p.chamber === "state_upper" || p.chamber === "state_lower"
+	? `${p.state} ${p.chamber === "state_upper" ? "Senate" : "House"}${p.sdistrict ? " District " + p.sdistrict : ""}` : p.chamber === "executive" ? p.role : `${p.state}${p.chamber === "house" && p.district ? "-" + p.district : p.chamber === "house" ? "-AL" : ""}`);
 export const year = (d) => (d ? d.slice(0, 4) : "");
 export const fmtDate = (d) => (d ? new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "");
 
@@ -295,7 +297,7 @@ function renderMain() {
 export const chromeOnly = () => chrome();
 export const chrome = () => `${S.admin ? `<div class="adminbar"><div class="wrap"><span>Signed in as admin — edit controls are visible on every profile.</span><span><a href="#/admin">Admin panel</a> · <a href="#" data-logout>Sign out</a></span></div></div>` : ""}
 	<div class="wrap"><header class="top"><a class="brand" href="#/">Who Stands <span>In The Way</span></a>
-	<nav><a class="btn ghost" href="#/">Dashboard</a><a class="btn ghost" href="#/zip">Find your rep</a><a class="btn ghost" href="#/votes">Key votes</a><a class="btn ghost" href="#/money">Money</a><a class="btn ghost" href="#/issues">Issues</a><a class="btn ghost" href="#/changes">Changes</a><a class="btn ghost" href="#/elections">2026 results</a><a class="btn" href="#/admin">${S.admin ? "Admin panel" : "Admin"}</a></nav></header></div>`;
+	<nav><a class="btn ghost" href="#/">Dashboard</a><a class="btn ghost" href="#/zip">Find your rep</a><a class="btn ghost" href="#/votes">Key votes</a><a class="btn ghost" href="#/money">Money</a><a class="btn ghost" href="#/states">States</a><a class="btn ghost" href="#/issues">Issues</a><a class="btn ghost" href="#/changes">Changes</a><a class="btn ghost" href="#/elections">2026 results</a><a class="btn" href="#/admin">${S.admin ? "Admin panel" : "Admin"}</a></nav></header></div>`;
 export const footer = () => `<footer><div class="wrap">Baseline: the Congress sworn in January 3, 2027, from <a href="${url(S.data.meta?.roster_source || "https://en.wikipedia.org/wiki/120th_United_States_Congress")}" target="_blank" rel="noopener">Wikipedia's 120th Congress roster</a> (checked against Wikidata); returning members' accounts from the <a href="https://github.com/unitedstates/congress-legislators" target="_blank" rel="noopener">congress-legislators</a> project; returning members' support = sponsors and cosponsors of the 119th Congress bill on <a href="https://www.congress.gov/bill/119th-congress/house-bill/3069" target="_blank" rel="noopener">congress.gov</a>; money from <a href="https://www.fec.gov/data/browse-data/?tab=bulk-data" target="_blank" rel="noopener">FEC bulk filings</a> (2025–26 cycle); lean starts from each member's voting record (<a href="https://voteview.com" target="_blank" rel="noopener">Voteview</a> DW-NOMINATE, 119th Congress) and can be overridden by hand; newcomers' stances researched from campaign statements in November 2026 and linked to their source. "Not on record" means not a cosponsor and nothing documented yet. Everything after the baseline is maintained by hand.</div></footer>`;
 
 // ------------------------------------------------------------------ profile drawer
@@ -310,6 +312,7 @@ async function openProfile(id) {
 	const alts = (p.twitter_alt || "").split(",").map((s) => s.trim()).filter(Boolean);
 	const fec = (p.fec_ids || "").split(",").map((s) => s.trim()).filter(Boolean);
 	const parse = (x) => { try { return JSON.parse(x || "[]"); } catch { return []; } };
+	const state = p.level === "state";
 	const offices = parse(p.offices), cmtes = parse(p.committees);
 	let moneyHtml = `<p class="note">No FEC filings matched for the 2025–26 cycle.</p>`;
 	if (f?.has_data) {
@@ -349,7 +352,7 @@ async function openProfile(id) {
 				<p class="note">A leadership PAC is a second fund the member controls. PACs that already gave the campaign the legal maximum can give here too. <a href="https://www.fec.gov/data/committee/${h(l.id)}/" target="_blank" rel="noopener">FEC filing ↗</a></p>`).join("")}`;
 	}
 	dlg.innerHTML = `<div class="dhead">${avatar(p)}
-			<div style="flex:1"><h2>${h(p.name)}</h2><div class="meta"><span class="party ${h(p.party)}">${h(PARTY[p.party] || p.party)}</span> · ${h(p.role)}${p.chamber === "executive" ? "" : " · " + h(seat(p))}${p.status === "incoming" ? " · new in 2027" : ""}</div>
+			<div style="flex:1"><h2>${h(p.name)}</h2><div class="meta"><span class="party ${h(p.party)}">${h(PARTY[p.party] || p.party)}</span> · ${state ? h(seat(p)) : h(p.role) + (p.chamber === "executive" ? "" : " · " + h(seat(p)))}${p.status === "incoming" ? " · new in 2027" : ""}</div>
 				<div class="meta">${p.status === "departing" ? "Leaving Congress January 3, 2027" : `${p.term_end ? `Serving ${p.status === "incoming" || p.chamber === "house" ? "Jan 3, 2027" : "now"} – ${h(fmtDate(p.term_end))}` : ""}${p.next_election ? ` · <b>next election ${h(fmtDate(p.next_election))}</b>` : ""}`}</div></div>
 			<div class="links dact">${callBtn(p, "btn primary call")}<button class="btn" data-close aria-label="Close">Close</button></div></div>
 		<div class="dbody">
@@ -365,8 +368,8 @@ async function openProfile(id) {
 			${p.notes ? `<p class="note">${h(p.notes)}</p>` : ""}
 			${leanBox(p)}
 			${alignmentBox(f)}
-			${votesBox(p)}
-			<div id="vrec"><h3>Full voting record</h3><p class="note">Loading…</p></div>
+			${state ? `<p class="note">State official · <a href="#/state/${h(p.state)}">All ${h(stateName(p.state))} officials</a></p>` : `${votesBox(p)}
+			<div id="vrec"><h3>Full voting record</h3><p class="note">Loading…</p></div>`}
 			${issueMatrix(p, d.issue_positions || [])}
 			<h3>On the record <small>${d.appearances.length} documented: shows, quotes, votes, posts</small></h3>
 			<div class="feed">${d.appearances.map((a) => appHtml(a, false)).join("") || `<p class="note">No appearances documented yet.</p>`}</div>
@@ -378,6 +381,7 @@ async function openProfile(id) {
 				<div><b>${p.phone_label ? "Phone" : "Washington office"}</b>${p.phone ? `<a href="${tel(p.phone)}">${h(p.phone)}</a>` : "—"}${p.phone_label ? `<span class="note">${h(p.phone_label)}</span>` : p.office ? `<span class="note">${h(p.office)}</span>` : ""}</div>
 				${offices.map((o) => `<div><b>${h(o.city)}${o.state ? ", " + h(o.state) : ""}</b>${o.phone ? `<a href="${tel(o.phone)}">${h(o.phone)}</a>` : "—"}<span class="note">${h([o.address, o.zip].filter(Boolean).join(" "))}</span></div>`).join("")}
 			</div>
+			${p.email ? `<p><a class="btn small" href="mailto:${h(p.email)}">Email ${h(p.email)}</a></p>` : ""}
 			${p.contact_form ? `<p><a class="btn small" href="${url(p.contact_form)}" target="_blank" rel="noopener">Email them (contact form) ↗</a></p>` : ""}
 			<p class="note">Tap a number to call from a phone; on a Mac it opens FaceTime or your iPhone.${offices.length ? " District offices are often easier to reach than Washington." : ""}</p>
 			${cmtes.length ? `<h3>Committees <small>119th Congress · new assignments come in January</small></h3>
@@ -388,8 +392,8 @@ async function openProfile(id) {
 				${p.bluesky ? link("https://bsky.app/profile/" + encodeURIComponent(p.bluesky), "Bluesky") : ""}${p.facebook ? link("https://www.facebook.com/" + encodeURIComponent(p.facebook), "Facebook") : ""}${p.instagram ? link("https://www.instagram.com/" + encodeURIComponent(p.instagram), "Instagram") : ""}${link(p.youtube, "YouTube")}</div>
 
 			${alts.length ? `<p class="note">"Other X" accounts come from Wikidata and may be campaign, personal or retired handles — verify before citing.</p>` : ""}
-			<h3>Who pays them <small>FEC, ${h(f?.cycle || "2025–26")} cycle</small></h3>
-			${moneyHtml}
+			${state ? `<h3>Who pays them</h3><p class="note">State campaign money isn't covered yet. ${h(stateName(p.state))}'s campaign-finance agency publishes every donation; <a href="https://ballotpedia.org/Campaign_finance_requirements_in_${encodeURIComponent(stateName(p.state).replace(/ /g, "_"))}" target="_blank" rel="noopener">where to find it ↗</a>.</p>` : `<h3>Who pays them <small>FEC, ${h(f?.cycle || "2025–26")} cycle</small></h3>
+			${moneyHtml}`}
 			${d.donors.length ? `<h3>Documented by hand</h3><table class="t"><tr><th>Donor</th><th>Type</th><th class="n">Amount</th><th></th></tr>${d.donors.map((x) => `<tr><td>${x.source_url ? `<a href="${url(x.source_url)}" target="_blank" rel="noopener">${h(x.donor_name)}</a>` : h(x.donor_name)}${x.sector ? ` <span class="tag">${h(x.sector)}</span>` : ""}${x.notes ? `<br><span class="note">${h(x.notes)}</span>` : ""}</td><td>${h(x.donor_type || "")}${x.cycle ? ` · ${h(x.cycle)}` : ""}</td><td class="n">${x.amount != null ? money(x.amount) : "—"}</td><td>${S.admin ? `<button class="btn small danger" data-del="donors" data-delid="${x.id}">Delete</button>` : ""}</td></tr>`).join("")}</table>` : ""}
 			${S.admin ? adminProfileTools.donor(p) : ""}
 			<div id="pwebwrap"></div>
@@ -397,13 +401,13 @@ async function openProfile(id) {
 			<div class="links">${p.opensecrets_id ? link("https://www.opensecrets.org/members-of-congress/summary?cid=" + encodeURIComponent(p.opensecrets_id), "OpenSecrets: donors by industry") : ""}
 				${fec.map((id) => link("https://www.fec.gov/data/candidate/" + encodeURIComponent(id) + "/", "FEC " + id)).join("")}
 				${p.govtrack_id ? link("https://www.govtrack.us/congress/members/" + encodeURIComponent(p.govtrack_id), "GovTrack") : ""}
-				${p.chamber !== "executive" && !p.id.startsWith("X-") ? link("https://www.congress.gov/member/x/" + encodeURIComponent(p.id), "Congress.gov") : ""}
+				${!state && p.chamber !== "executive" && !p.id.startsWith("X-") ? link("https://www.congress.gov/member/x/" + encodeURIComponent(p.id), "Congress.gov") : ""}
 				${p.wikipedia ? link("https://en.wikipedia.org/wiki/" + encodeURIComponent(p.wikipedia.replace(/ /g, "_")), "Wikipedia") : ""}</div>
 			<p class="note">Health-industry PACs are flagged by matching PAC and parent-company names: pharma and distributors, insurers and PBMs, hospitals, medical devices, care providers (dialysis, labs, nursing homes, physician staffing) and doctors' groups. Nurses' groups and unions are left out. Donations from individual executives and employees aren't industry-coded by the FEC; OpenSecrets has that breakdown.</p>
 			${S.admin ? adminProfileTools.edit(p) : ""}
 		</div>`;
 	dlg.dataset.id = p.id;
-	votingRecord(dlg.querySelector("#vrec"), p);
+	if (!state) votingRecord(dlg.querySelector("#vrec"), p);
 	moneyWeb(dlg.querySelector("#pwebwrap"), p, f);
 	profileHistory(dlg.querySelector("#phist"), p.id);
 	if (!dlg.open) dlg.showModal();
@@ -431,6 +435,8 @@ function route() {
 		else if (page.startsWith("#/elections")) renderElections(page.split("/")[2] || "");
 		else if (page.startsWith("#/votes")) renderVotes();
 		else if (page.startsWith("#/changes")) renderChanges();
+		else if (page.startsWith("#/states")) renderStates();
+		else if (page.startsWith("#/state/")) renderState(page.split("/")[2] || "");
 		else if (page.startsWith("#/money")) renderMoney(page.split("/").slice(2));
 		else if (page.startsWith("#/zip")) renderZip(decodeURIComponent(page.split("/")[2] || ""));
 		else renderMain();
@@ -489,6 +495,7 @@ function bind() {
 	bindMoney();
 	bindX();
 	bindChanges();
+	bindStates();
 }
 
 load().then(() => { bind(); route(); }).catch((e) => { $("#app").innerHTML = `<p class="loading">Couldn't load data: ${h(e.message)}</p>`; });

@@ -15,6 +15,7 @@ fi
 python3 scripts/fetch_roster_120.py --refresh
 python3 scripts/leadership_pacs.py
 python3 scripts/employee_donations.py
+.venv/bin/python scripts/state_officials.py
 python3 scripts/build_seed.py
 python3 scripts/money_network.py
 python3 scripts/vote_records.py

@@ -10,7 +10,8 @@ const SCHEMA = [
 		term_start TEXT, term_end TEXT, website TEXT, contact_form TEXT, phone TEXT, office TEXT,
 		next_election TEXT, twitter TEXT, twitter_alt TEXT, facebook TEXT, instagram TEXT, youtube TEXT, bluesky TEXT, mastodon TEXT,
 		opensecrets_id TEXT, fec_ids TEXT, govtrack_id INTEGER, wikipedia TEXT, ballotpedia TEXT, photo_url TEXT, notes TEXT,
-		lean TEXT, ideology REAL, lean_note TEXT, lean_source TEXT, phone_label TEXT, offices TEXT, committees TEXT)`,
+		lean TEXT, ideology REAL, lean_note TEXT, lean_source TEXT, phone_label TEXT, offices TEXT, committees TEXT,
+		level TEXT, sdistrict TEXT, email TEXT)`,
 	`CREATE TABLE IF NOT EXISTS terms (
 		politician_id TEXT NOT NULL, congress INTEGER NOT NULL, chamber TEXT, state TEXT, district INTEGER, party TEXT,
 		voting INTEGER, role TEXT, PRIMARY KEY (politician_id, congress))`,
@@ -59,7 +60,8 @@ const COLS = {
 	politicians: ["id", "name", "first", "last", "chamber", "role", "state", "district", "party", "caucus", "voting",
 		"status", "term_start", "term_end", "next_election", "website", "contact_form", "phone", "office", "twitter", "twitter_alt",
 		"facebook", "instagram", "youtube", "bluesky", "mastodon", "opensecrets_id", "fec_ids", "govtrack_id",
-		"wikipedia", "ballotpedia", "photo_url", "notes", "lean", "ideology", "lean_note", "phone_label", "offices", "committees"],
+		"wikipedia", "ballotpedia", "photo_url", "notes", "lean", "ideology", "lean_note", "phone_label", "offices", "committees",
+		"level", "sdistrict", "email"],
 	terms: ["politician_id", "congress", "chamber", "state", "district", "party", "voting", "role"],
 	races: ["chamber", "state", "district", "special", "pvi", "result", "candidates", "winner_id", "exit_polls"],
 	issues: ["id", "name", "description", "rank"],
@@ -106,6 +108,10 @@ const MIGRATIONS = [
 	"ALTER TABLE politicians ADD COLUMN phone_label TEXT",
 	"ALTER TABLE politicians ADD COLUMN offices TEXT",
 	"ALTER TABLE politicians ADD COLUMN committees TEXT",
+	"ALTER TABLE politicians ADD COLUMN level TEXT",
+	"ALTER TABLE politicians ADD COLUMN sdistrict TEXT",
+	"ALTER TABLE politicians ADD COLUMN email TEXT",
+	"CREATE INDEX IF NOT EXISTS idx_pol_level ON politicians (level, state)",
 ];
 
 async function init(db) {
@@ -120,6 +126,8 @@ async function init(db) {
 	// Load or refresh the baseline. Roster and FEC figures are replaced; anything entered by hand
 	// (stances you changed, appearances, donors, outlets, policies, people you added) is kept.
 	const before = have ? new Map((await db.prepare("SELECT politician_id, stance FROM positions WHERE policy_id = 'm4a'").all()).results.map((r) => [r.politician_id, r.stance])) : null;
+	// Only people already on the site get "data update" log entries; newly added people would flood the log.
+	const existed = have ? new Set((await db.prepare("SELECT id FROM politicians").all()).results.map((r) => r.id)) : null;
 	const stmts = [];
 	const bulk = (sql, cols, rows, size) => {
 		const sel = cols.map((c) => `json_extract(value,'$.${c}')`).join(",");
@@ -165,7 +173,7 @@ async function init(db) {
 		const logs = [];
 		for (const r of after) {
 			const was = before.get(r.politician_id) || "unknown";
-			if (was !== r.stance && live.has(r.politician_id)) logs.push(change(db, { politician_id: r.politician_id, kind: "stance", field: "m4a", old: was, new: r.stance, note: r.note, source_url: r.source_url, actor: "data update" }));
+			if (was !== r.stance && live.has(r.politician_id) && existed.has(r.politician_id)) logs.push(change(db, { politician_id: r.politician_id, kind: "stance", field: "m4a", old: was, new: r.stance, note: r.note, source_url: r.source_url, actor: "data update" }));
 		}
 		for (const [pid, was] of before) {
 			if (!after.some((r) => r.politician_id === pid) && was !== "unknown" && live.has(pid)) logs.push(change(db, { politician_id: pid, kind: "stance", field: "m4a", old: was, new: "unknown", actor: "data update" }));
@@ -232,7 +240,8 @@ async function bootstrap(db) {
 			json_extract(f.data,'$.totals.pacs') AS pacs,
 			COALESCE(json_extract(f.data,'$.outside.support'),0) AS outside_support,
 			COALESCE(json_extract(f.data,'$.outside.oppose'),0) AS outside_oppose
-			FROM politicians p LEFT JOIN finance f ON f.politician_id = p.id ORDER BY p.last, p.name`),
+			FROM politicians p LEFT JOIN finance f ON f.politician_id = p.id
+			WHERE COALESCE(p.level, 'federal') != 'state' ORDER BY p.last, p.name`),
 		db.prepare("SELECT * FROM policies ORDER BY is_primary DESC, sort, name"),
 		db.prepare("SELECT politician_id, policy_id, stance, note, source_url, updated_at FROM positions"),
 		db.prepare("SELECT * FROM outlets ORDER BY name"),
@@ -533,6 +542,24 @@ export default {
 				if (kind) { where.push("c.kind IN (SELECT value FROM json_each(?))"); args.push(JSON.stringify(kind.split(","))); }
 				const r = await env.DB.prepare(`SELECT c.*, p.name AS politician_name, p.party, p.state, p.chamber, p.district FROM changes c
 					LEFT JOIN politicians p ON p.id = c.politician_id WHERE ${where.join(" AND ")} ORDER BY c.at DESC, c.id DESC LIMIT ?`).bind(...args, limit).all();
+				return json(r.results);
+			}
+			if (parts[0] === "states" && req.method === "GET") {
+				// One row per state: officials by chamber and stance (Medicare for All / single-payer).
+				const r = await env.DB.prepare(`SELECT p.state, p.chamber, p.status, COALESCE(s.stance, 'unknown') AS stance, COUNT(*) AS n
+					FROM politicians p LEFT JOIN positions s ON s.politician_id = p.id AND s.policy_id = 'm4a'
+					WHERE p.level = 'state' AND p.status != 'former' GROUP BY p.state, p.chamber, p.status, stance`).all();
+				const g = await env.DB.prepare(`SELECT p.id, p.name, p.party, p.state, p.role, p.status, COALESCE(s.stance, 'unknown') AS stance
+					FROM politicians p LEFT JOIN positions s ON s.politician_id = p.id AND s.policy_id = 'm4a'
+					WHERE p.level = 'state' AND p.chamber = 'governor' AND p.status != 'former'`).all();
+				return json({ counts: r.results, governors: g.results });
+			}
+			if (parts[0] === "state" && parts[1] && req.method === "GET") {
+				const st = parts[1].toUpperCase().slice(0, 2);
+				const r = await env.DB.prepare(`SELECT p.id, p.name, p.first, p.last, p.chamber, p.role, p.state, p.sdistrict, p.party, p.status,
+					p.photo_url, p.phone, p.email, p.website, p.twitter, p.notes, COALESCE(s.stance, 'unknown') AS stance, s.note AS stance_note, s.source_url
+					FROM politicians p LEFT JOIN positions s ON s.politician_id = p.id AND s.policy_id = 'm4a'
+					WHERE p.level = 'state' AND p.state = ? AND p.status != 'former' ORDER BY p.chamber, p.last`).bind(st).all();
 				return json(r.results);
 			}
 			if (parts[0] === "races" && req.method === "GET") {

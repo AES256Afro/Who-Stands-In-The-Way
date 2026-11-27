@@ -679,6 +679,23 @@ for pid, name, first, last, role, site, tw, alt, note in EXEC:
         "youtube": "", "bluesky": "", "mastodon": "", "opensecrets_id": "", "fec_ids": "",
         "govtrack_id": None, "wikipedia": name, "ballotpedia": "", "photo_url": "", "notes": note})
 
+# ---------------------------------------------------------------- state officials (scripts/state_officials.py)
+_so = RAW / "state_officials.json"
+state_people = 0
+if _so.exists():
+    so = json.load(open(_so, encoding="utf-8"))
+    base = {k: "" for k in politicians[0]}
+    for x in so["people"]:
+        politicians.append({**base, "lean": "unknown", "ideology": None, "lean_note": "", "phone_label": "", "committees": "[]",
+                            "fec_ids": "", "govtrack_id": None, "opensecrets_id": "", "ballotpedia": "", "twitter_alt": "",
+                            "bluesky": "", "mastodon": "", "caucus": "", **x})
+        state_people += 1
+    positions += so["positions"]
+for p_ in politicians:
+    p_.setdefault("level", "federal")
+    p_.setdefault("sdistrict", "")
+    p_.setdefault("email", "")
+
 policies = [
     {"id": "m4a", "name": "Medicare for All", "is_primary": 1, "sort": 0,
      "description": "Single-payer national health insurance. Counting the Congress sworn in on January 3, 2027: "
@@ -706,6 +723,8 @@ meta = {"congresses": [{"id": 120, "label": "120th Congress (from Jan 3, 2027)"}
 seed = {"version": f"120b-{TODAY}-{len(positions)}-{len(issues)}-{len(exit_polls['national'])}-{len(exit_polls['senate'])}",
         "terms": terms, "races": races, "key_votes": key_votes, "member_votes": member_votes, "issues": issues, "issue_polls": issue_polls, "meta": meta, "generated": TODAY, "politicians": politicians, "positions": positions, "policies": policies,
         "outlets": outlets, "finance": finance}
+# Drop empty fields (the database reads a missing field as NULL); this keeps ~7,400 state records small.
+seed["politicians"] = [{k: v for k, v in p_.items() if v not in ("", None, "[]")} for p_ in seed["politicians"]]
 # The Worker reloads the baseline whenever this version changes, so make it a fingerprint of the content.
 import hashlib
 seed["version"] = "v-" + hashlib.sha256(json.dumps({k: v for k, v in seed.items() if k not in ("version", "generated")},
@@ -729,6 +748,7 @@ print("terms", collections.Counter(t["congress"] for t in terms), "departing", d
       "races", collections.Counter(r["chamber"] for r in races), "races w/o winner id", [(r["state"], r["district"]) for r in races if not r["winner_id"]],
       "issues", len(issues), "polls", len(issue_polls), "exit national", len(exit_polls["national"]), "exit states", len(exit_polls["senate"]))
 print("lean", collections.Counter(p["lean"] for p in politicians))
+print("state officials", state_people)
 print("key votes", [(v["id"], v.get("tally")) for v in key_votes], "member votes", len(member_votes))
 t120s = {t["politician_id"] for t in terms if t["congress"] == 120}
 m120 = [p for p in politicians if p["id"] in t120s and p["chamber"] != "executive"]

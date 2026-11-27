@@ -10,6 +10,7 @@ Live at https://whostandsintheway.com (and www; the workers.dev address also wor
 - **Map**: every state's senators and House seats, colored by party, Medicare for All stance or lean; tap a state for its members.
 - **Issues** (`/#/issues`): the ~30 issues Americans rank highest, with linked polling; each profile has a position matrix on them.
 - **2026 results** (`/#/elections`): every House and Senate race, plus exit-poll findings for Senate races.
+- **States** (`/#/states`, `/#/state/<ST>`): governors (now and from 2027) and ~7,300 state legislators from Open States (CC0), with single-payer stances: governors researched individually, legislators from sponsorship of 2025–26 state single-payer bills (`data/raw/research/state/`). Built by `scripts/state_officials.py` (venv, PyYAML) before `build_seed.py`.
 - **District map**: the dashboard map's "House districts" view draws every 2027 district (`public/geo/districts.json`, built by `scripts/district_shapes.py` with `.venv/bin/python` from the TIGER 2026 cd120 shapes).
 - **Change log** (`/#/changes`, RSS at `/changes.xml`): every stance, evidence, entry, donor and profile change with old and new values.
 - **Find your rep** (`/#/zip/<ZIP>`): senators and House member(s) for a ZIP, with stance, call button and a call script. The lookup (`public/zip/*.json`) is built by `scripts/zip_lookup.py` (run with `.venv/bin/python`, needs shapely and pyshp) from Census ZIP areas and TIGER 2026 "cd120" district shapes, so it uses the January 2027 district lines.

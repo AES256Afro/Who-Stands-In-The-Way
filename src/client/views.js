@@ -103,7 +103,7 @@ export function stateHtml() {
 	const undecided = isNext() ? (S.data.meta?.undecided || []).filter((x) => x.startsWith(S.mapState + "-")) : [];
 	return `<section class="card statecard">
 		<div class="maphead"><div><h2>${h(STATE_NAMES[S.mapState] || S.mapState)}</h2><p class="sub">${s.senate.length} senators · ${s.house.length} House seat${s.house.length === 1 ? "" : "s"}${undecided.length ? ` · ${h(undecided.join(", "))} undecided` : ""}</p></div>
-			<span class="links"><a class="btn small" href="#/elections/${h(S.mapState)}">2026 results</a><button class="btn small" data-clearstate>Close</button></span></div>
+			<span class="links"><a class="btn small" href="#/state/${h(S.mapState)}">State government</a><a class="btn small" href="#/elections/${h(S.mapState)}">2026 results</a><button class="btn small" data-clearstate>Close</button></span></div>
 		<h3 class="mini">Senate</h3><div class="list compact">${[...s.senate].sort(sortSeat).map(miniRow).join("") || `<p class="note">None.</p>`}</div>
 		<h3 class="mini">House</h3><div class="list compact">${[...s.house].sort((a, b) => (a.district || 0) - (b.district || 0)).map(miniRow).join("") || `<p class="note">None.</p>`}</div>
 	</section>`;
