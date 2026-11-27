@@ -74,7 +74,7 @@ export async function renderFocus(st) {
 	let d;
 	try { d = await api("focus/" + encodeURIComponent(st)); } catch (e) { $("#app").innerHTML = `${chrome()}<p class="loading">${h(e.message)}</p>`; return; }
 	const people = d.agenda.sort((a, b) => ORDER(a) - ORDER(b) || (b.status === "incoming") - (a.status === "incoming") || a.name.localeCompare(b.name));
-	const f = (S.focus ||= { who: "" });
+	const f = (S.focus ||= { who: "", via: "" });
 	const all = people.flatMap((p) => (p.data.timeline || []).map((t) => ({ ...t, _who: p.name, _id: p.id })));
 	const card = (p) => {
 		const a = p.data, first = (a.plans || []).filter((x) => ["day1", "week1", "month1", "first100"].includes(x.horizon));
@@ -104,7 +104,8 @@ export async function renderFocus(st) {
 	}).join("");
 	const opts = people.filter((p) => (p.data.timeline || []).length);
 	const draw = () => {
-		const rows = all.filter((t) => !f.who || t._id === f.who);
+		const via = (t) => (t.platform === "x" || /\/\/(?:x|twitter)\.com\//.test(t.url || "") ? "x" : t.platform === "bluesky" || /bsky\.app/.test(t.url || "") ? "bluesky" : "other");
+		const rows = all.filter((t) => (!f.who || t._id === f.who) && (!f.via || via(t) === f.via));
 		$("#ftl").innerHTML = timelineHtml(rows, !f.who) || `<p class="empty">No dated statements yet.</p>`;
 	};
 	$("#app").innerHTML = `${chrome()}<main class="wrap">
@@ -113,7 +114,8 @@ export async function renderFocus(st) {
 		${groups.map(([title, test]) => { const xs = people.filter(test); return xs.length ? `<div class="section-title"><h2>${h(title)}</h2><span>${xs.length}</span></div><div class="fgrid">${xs.map(card).join("")}</div>` : ""; }).join("")}
 		${tracker}
 		<div class="section-title"><h2>Timeline</h2><span>Everyone's dated statements, newest first</span></div>
-		<div class="filters" style="position:static"><select id="ftwho"><option value="">Everyone</option>${opts.map((p) => `<option value="${h(p.id)}"${f.who === p.id ? " selected" : ""}>${h(p.name)}</option>`).join("")}</select></div>
+		<div class="filters" style="position:static"><select id="ftwho"><option value="">Everyone</option>${opts.map((p) => `<option value="${h(p.id)}"${f.who === p.id ? " selected" : ""}>${h(p.name)}</option>`).join("")}</select>
+			<select id="ftvia">${[["", "All sources"], ["x", "Posts on X"], ["bluesky", "Posts on Bluesky"], ["other", "News, speeches, votes"]].map(([v, l]) => `<option value="${v}"${f.via === v ? " selected" : ""}>${l}</option>`).join("")}</select></div>
 		<div id="ftl"></div>
 		<p class="note">Researched November 2026 from candidates' own sites, posts, debates and Texas news coverage; every item links to its source. Gaps are filled over time; admins can edit any agenda from the profile.</p>
 	</main>${footer()}`;
@@ -122,5 +124,8 @@ export async function renderFocus(st) {
 }
 
 export function bindFocus() {
-	document.addEventListener("change", (e) => { if (e.target.id === "ftwho") { S.focus.who = e.target.value; renderFocus.redraw?.(); } });
+	document.addEventListener("change", (e) => {
+		if (e.target.id === "ftwho") { S.focus.who = e.target.value; renderFocus.redraw?.(); }
+		if (e.target.id === "ftvia") { S.focus.via = e.target.value; renderFocus.redraw?.(); }
+	});
 }

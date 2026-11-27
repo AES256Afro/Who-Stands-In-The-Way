@@ -78,7 +78,7 @@ done = set()
 ROLE = {"railroad": "Railroad Commissioner", "lieutenant": "Lieutenant Governor", "attorney": "Attorney General", "comptroller": "Comptroller",
         "land": "Land Commissioner", "agriculture": "Agriculture Commissioner"}
 for f in sorted(glob.glob(str(DIR / "*.json")), key=lambda f: (pathlib.Path(f).name.startswith("tx-"), f)):
-    if f.endswith("tx-medicaid-expansion.json"):
+    if f.endswith("tx-medicaid-expansion.json") or pathlib.Path(f).name.startswith("more-"):
         continue
     try:
         data = json.load(open(f, encoding="utf-8"))
@@ -113,6 +113,46 @@ for f in sorted(glob.glob(str(DIR / "*.json")), key=lambda f: (pathlib.Path(f).n
                 stance = "unclear" if x["stance"] == "supports" and WEAK.match(x["source_url"]) else x["stance"]
                 positions.append({"politician_id": pid, "policy_id": pol, "stance": stance, "note": "Researched Nov 2026: " + (x.get("note") or ""),
                                   "source_url": x["source_url"], "updated_at": TODAY})
+
+# ---------------------------------------------------------------- add-on files (backfill): append, never replace
+by_pid = {a["politician_id"]: a["data"] for a in agenda}
+for f in sorted(glob.glob(str(DIR / "more-*.json"))):
+    try:
+        extra = json.load(open(f, encoding="utf-8"))
+    except ValueError as e:
+        print("skipping", f, e)
+        continue
+    for x in extra if isinstance(extra, list) else [extra]:
+        pid = ALIAS.get(x.get("politician_id") or "", x.get("politician_id") or "")
+        d = by_pid.get(pid)
+        if d is None:
+            print("add-on for unknown agenda", pid)
+            continue
+        acc_new = x.get("accounts") or {}
+        x = clean({k: x.get(k) or [] for k in ("priorities", "plans", "unpopular", "polling", "timeline")})
+        for k in ("timeline", "plans", "priorities"):
+            link = lambda i: i.get("url") or i.get("source_url")
+            seen = {(link(i), i.get("date"), i.get("text") or i.get("title")) for i in d.get(k) or []}
+            # The same story on the same day counts once, even if the paraphrase differs.
+            seen_day = {(link(i), i.get("date")) for i in d.get(k) or []}
+            for i in x.get(k) or []:
+                if (link(i), i.get("date"), i.get("text") or i.get("title")) in seen or (k == "timeline" and (link(i), i.get("date")) in seen_day):
+                    continue
+                d.setdefault(k, []).append(i)
+                seen.add((link(i), i.get("date"), i.get("text") or i.get("title"))); seen_day.add((link(i), i.get("date")))
+        acc = d.get("accounts") or {}
+        for k, v in acc_new.items():
+            if v and not acc.get(k):
+                acc[k] = v
+        d["accounts"] = acc
+        d["timeline"] = sorted(d.get("timeline") or [], key=lambda t: str(t.get("date") or ""), reverse=True)
+
+# New statewide officials take their profile links from the (possibly backfilled) accounts.
+for p in new_people:
+    acc = (by_pid.get(p["id"]) or {}).get("accounts") or {}
+    p["twitter"] = p.get("twitter") or (acc.get("x") or "").lstrip("@")
+    p["bluesky"] = p.get("bluesky") or (acc.get("bluesky") or "").lstrip("@")
+    p["website"] = p.get("website") or acc.get("website") or acc.get("campaign_site") or ""
 
 # ---------------------------------------------------------------- Medicaid / Medicare expansion evidence
 have = {(p["politician_id"], p["policy_id"]) for p in positions}
