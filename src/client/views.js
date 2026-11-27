@@ -92,7 +92,7 @@ export function mapHtml() {
 
 const miniRow = (p) => `<button class="row" style="--stance:var(--s-${stanceOf(p.id)})" data-id="${h(p.id)}">${avatar(p)}
 	<span><span class="name">${h(p.name)}</span><br><span class="meta"><span class="party ${h(p.party)}">${h(p.party)}</span> · ${h(seat(p))}${p.status === "incoming" ? ` · <span class="tag new">New</span>` : ""}${p.lean && p.lean !== "unknown" ? ` · ${h(LEAN[p.lean])}` : ""}</span></span>
-	<span class="right">${pill(stanceOf(p.id))}<span>${p.next_election ? `Up ${year(p.next_election)}` : p.status === "departing" ? "Leaving Jan 2027" : ""}</span></span></button>`;
+	<span class="right">${pill(stanceOf(p.id))}<span>${p.status === "departing" ? "Leaving Jan 3, 2027" : p.next_election ? `Next election ${year(p.next_election)}` : ""}</span></span></button>`;
 
 export function stateHtml() {
 	if (!S.mapState) return "";

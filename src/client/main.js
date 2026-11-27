@@ -186,7 +186,7 @@ function listHtml() {
 		return `<button class="row" style="--stance:var(--s-${st})" data-id="${h(p.id)}">
 			${avatar(p)}
 			<span><span class="name">${h(p.name)}</span><br><span class="meta"><span class="party ${h(p.party)}">${h(p.party)}</span> · ${h(seat(p))} · ${h(p.role)}${p.voting ? "" : p.chamber === "house" ? " (non-voting)" : ""}${p.status === "incoming" ? ` · <span class="tag new">New</span>` : ""}${p.status === "departing" ? ` · <span class="tag">Leaving</span>` : ""}${p.lean && p.lean !== "unknown" ? ` · <span class="tag lean" style="--lean:var(--l-${h(p.lean)})">${h(LEAN[p.lean])}</span>` : ""}</span></span>
-			<span class="right">${pill(st)}<span>${p.next_election ? `Up ${year(p.next_election)}` : ""}${extra ? " · " + h(extra) : ""}${apps.get(p.id) ? ` · ${apps.get(p.id)} clip${apps.get(p.id) > 1 ? "s" : ""}` : ""}</span></span>
+			<span class="right">${pill(st)}<span>${p.next_election ? `Next election ${year(p.next_election)}` : ""}${extra ? " · " + h(extra) : ""}${apps.get(p.id) ? ` · ${apps.get(p.id)} clip${apps.get(p.id) > 1 ? "s" : ""}` : ""}</span></span>
 		</button>`;
 	}).join("");
 }
@@ -227,9 +227,14 @@ function renderMain() {
 	const opt = (v, l, cur) => `<option value="${h(v)}"${cur === v ? " selected" : ""}>${h(l)}</option>`;
 	$("#app").innerHTML = `${chrome()}
 	<main class="wrap">
+		<div class="congress-switch" role="group" aria-label="Which Congress to show">
+			${(d.meta?.congresses || []).map((c) => `<button type="button" data-congress="${c.id}" aria-pressed="${c.id === S.congress}">
+				<b>${c.id === (d.meta?.default_congress || 120) ? "January 2027 Congress" : "Current Congress"}</b>
+				<span>${c.id === (d.meta?.default_congress || 120) ? "120th · sworn in Jan 3, 2027" : "119th · leaves office Jan 3, 2027"}</span></button>`).join("")}
+		</div>
 		<section class="hero">
 			<div>
-				<div class="eyebrow"><select id="congress" aria-label="Which Congress">${(d.meta?.congresses || []).map((c) => opt(String(c.id), c.label, String(S.congress))).join("")}</select> · ${d.policies.length > 1 ? `<select id="policy" aria-label="Policy">${d.policies.map((p) => opt(p.id, p.name, S.policy)).join("")}</select>` : h(pol.name)} · ${h([pol.bill_house, pol.bill_senate].filter(Boolean).join(" / "))}</div>
+				<div class="eyebrow">${d.policies.length > 1 ? `<select id="policy" aria-label="Policy">${d.policies.map((p) => opt(p.id, p.name, S.policy)).join("")}</select>` : h(pol.name)} · ${h([pol.bill_house, pol.bill_senate].filter(Boolean).join(" / "))}</div>
 				<h1><em>${yes}</em> of ${voting.length} in the ${next ? "next" : "current"} Congress are on record for ${h(pol.name)}.</h1>
 				<p>${h(pol.description || "")} Everyone else is standing in the way until they say otherwise.</p>
 				${next ? `<div class="kv split">
@@ -314,7 +319,7 @@ async function openProfile(id) {
 	}
 	dlg.innerHTML = `<div class="dhead">${avatar(p)}
 			<div style="flex:1"><h2>${h(p.name)}</h2><div class="meta"><span class="party ${h(p.party)}">${h(PARTY[p.party] || p.party)}</span> · ${h(p.role)}${p.chamber === "executive" ? "" : " · " + h(seat(p))}${p.status === "incoming" ? " · new in 2027" : ""}</div>
-				<div class="meta">${p.status === "departing" ? "Leaving Congress January 3, 2027" : `${p.term_end ? `Term ends ${h(fmtDate(p.term_end))}` : ""}${p.next_election ? ` · <b>up for re-election ${h(fmtDate(p.next_election))}</b>` : ""}`}</div></div>
+				<div class="meta">${p.status === "departing" ? "Leaving Congress January 3, 2027" : `${p.term_end ? `Serving ${p.status === "incoming" || p.chamber === "house" ? "Jan 3, 2027" : "now"} – ${h(fmtDate(p.term_end))}` : ""}${p.next_election ? ` · <b>next election ${h(fmtDate(p.next_election))}</b>` : ""}`}</div></div>
 			<button class="btn" data-close aria-label="Close">Close</button></div>
 		<div class="dbody">
 			<h3>Where they stand</h3>
@@ -387,6 +392,8 @@ function bind() {
 	const tip = $("#tip");
 	document.addEventListener("click", async (e) => {
 		const t = e.target;
+		const cg = t.closest("[data-congress]");
+		if (cg) { S.congress = Number(cg.dataset.congress); S.mapState = ""; S.f.cohort = ""; applyCongress(); renderMain(); return; }
 		if (t.closest("[data-logout]")) { e.preventDefault(); await api("logout", { method: "POST" }); toast("Signed out"); markDirty(); await refresh(); return; }
 		if (t.closest("[data-close]")) { location.hash = route.back || "#/"; return; }
 		const del = t.closest("[data-del]");
