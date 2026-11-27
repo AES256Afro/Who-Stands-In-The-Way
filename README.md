@@ -8,6 +8,10 @@ what they've said on the record, and who funds them. One Cloudflare Worker + D1 
 - **Issues** (`/#/issues`): the ~30 issues Americans rank highest, with linked polling; each profile has a position matrix on them.
 - **2026 results** (`/#/elections`): every House and Senate race, plus exit-poll findings for Senate races.
 - **Find your rep** (`/#/zip/<ZIP>`): senators and House member(s) for a ZIP, with stance, call button and a call script. The lookup (`public/zip/*.json`) is built by `scripts/zip_lookup.py` (run with `.venv/bin/python`, needs shapely and pyshp) from Census ZIP areas and TIGER 2026 "cd120" district shapes, so it uses the January 2027 district lines.
+- **Key votes** (`/#/votes`): seven 2025 health roll calls (`scripts/key_votes.json`), each member's vote, and a "protected coverage on X of Y" score.
+- **Full voting records** on every profile: every 119th-Congress roll call (`public/votes/*.json`, built by `scripts/vote_records.py` from Voteview).
+- **Money–vote alignment** on profiles: health-industry money (chamber percentile) against votes on the key health votes. A correlation, not a measure of motive.
+- **Follow the money** (`/#/money`): flow chart, PAC & super PAC matrix, megadonors ($1M+ people, $250k+ organizations), committee and donor pages, and a money web on each profile (`public/money/*.json`, built by `scripts/money_network.py` from FEC bulk files; run it after `build_seed.py`).
 - **Congress selector**: the 120th (from Jan 3, 2027, the default) or the current 119th.
 - **Admin** (`/#/admin`): password sign-in. Log appearances, add outlets, set stances, add policies, add people, document donors.
 

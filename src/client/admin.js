@@ -176,6 +176,7 @@ export function bindAdmin() {
 		if (kind === "issuepos") return save(() => api("admin/issue_positions", { method: "PUT", body: b }), "Position saved");
 		if (kind === "issue") return save(() => api("admin/issues" + (id ? "/" + encodeURIComponent(id) : ""), { method: id ? "PUT" : "POST", body: b }), id ? "Issue saved" : "Issue added");
 		if (kind === "poll") return save(() => api("admin/issue_polls" + (id ? "/" + encodeURIComponent(id) : ""), { method: id ? "PUT" : "POST", body: b }), id ? "Poll saved" : "Poll added");
+		if (kind === "keyvote") return save(() => api("admin/key_votes/" + encodeURIComponent(id), { method: "PUT", body: { ...b, hidden: b.hidden === "1" } }), "Vote saved");
 		if (kind === "donor") return save(() => api("admin/donors", { method: "POST", body: b }), "Donor saved");
 		if (kind === "politician-edit") return save(() => api("admin/politicians/" + encodeURIComponent(id), { method: "PUT", body: b }), "Profile saved");
 		if (kind === "politician-new") return save(async () => { const r = await api("admin/politicians", { method: "POST", body: b }); location.hash = "#/p/" + encodeURIComponent(r.id); }, "Person added", false);

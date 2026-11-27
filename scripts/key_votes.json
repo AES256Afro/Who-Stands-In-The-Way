@@ -1,0 +1,58 @@
+[
+  {
+    "id": "s119-186", "chamber": "senate", "rollnumber": 186, "date": "2025-04-05", "sort": 1,
+    "title": "Baldwin amendment: shield Medicaid funding",
+    "question": "On the Amendment S.Amdt. 1693 to H.Con.Res. 14 (2025 budget resolution)",
+    "yes_means": "Yes was a vote to add a budget reserve fund aimed at preventing Medicaid funding cuts that could close rural hospitals, raise costs for people with other insurance, or increase uncompensated care.",
+    "coverage_side": "yea",
+    "source_url": "https://www.senate.gov/legislative/LIS/roll_call_votes/vote1191/vote_119_1_00186.htm"
+  },
+  {
+    "id": "h119-145", "chamber": "house", "rollnumber": 144, "clerk_roll": 145, "date": "2025-05-22", "sort": 2,
+    "title": "House passes H.R. 1, the One Big Beautiful Bill Act",
+    "question": "On Passage of H.R. 1",
+    "yes_means": "Yes was a vote to pass the House version of the 2025 budget reconciliation bill. Its health provisions included new Medicaid work requirements and limits on how states finance their share of Medicaid.",
+    "coverage_side": "nay",
+    "source_url": "https://clerk.house.gov/Votes/2025145"
+  },
+  {
+    "id": "s119-361", "chamber": "senate", "rollnumber": 361, "date": "2025-07-01", "sort": 3,
+    "title": "Kim amendment: strike H.R. 1's limits on Medicaid payments",
+    "question": "On the Amendment S.Amdt. 2817 to H.R. 1",
+    "yes_means": "Yes was a vote to remove the bill's limits on certain Medicaid payments to states and providers.",
+    "coverage_side": "yea",
+    "source_url": "https://www.senate.gov/legislative/LIS/roll_call_votes/vote1191/vote_119_1_00361.htm"
+  },
+  {
+    "id": "s119-362", "chamber": "senate", "rollnumber": 362, "date": "2025-07-01", "sort": 4,
+    "title": "Sanders amendment: halve Medicare drug prices, add dental, vision and hearing",
+    "question": "On the Amendment S.Amdt. 2435 to H.R. 1",
+    "yes_means": "Yes was a vote to cut prescription drug prices under Medicare in half and expand Medicare to cover dental, vision and hearing.",
+    "coverage_side": "yea",
+    "source_url": "https://www.senate.gov/legislative/LIS/roll_call_votes/vote1191/vote_119_1_00362.htm"
+  },
+  {
+    "id": "s119-372", "chamber": "senate", "rollnumber": 372, "date": "2025-07-01", "sort": 5,
+    "title": "Senate passes H.R. 1, the One Big Beautiful Bill Act",
+    "question": "On Passage of the Bill H.R. 1",
+    "yes_means": "Yes was a vote to pass the 2025 budget reconciliation bill, which added Medicaid work requirements and limits on state Medicaid financing. It passed 50-50 with the Vice President breaking the tie.",
+    "coverage_side": "nay",
+    "source_url": "https://www.senate.gov/legislative/LIS/roll_call_votes/vote1191/vote_119_1_00372.htm"
+  },
+  {
+    "id": "h119-190", "chamber": "house", "rollnumber": 189, "clerk_roll": 190, "date": "2025-07-03", "sort": 6,
+    "title": "House gives final approval to H.R. 1",
+    "question": "On Motion to Concur in the Senate Amendment to H.R. 1",
+    "yes_means": "Yes was a vote to send the Senate-passed budget reconciliation bill, with its Medicaid work requirements and financing limits, to the President to become law.",
+    "coverage_side": "nay",
+    "source_url": "https://clerk.house.gov/Votes/2025190"
+  },
+  {
+    "id": "s119-644", "chamber": "senate", "rollnumber": 644, "date": "2025-12-11", "sort": 7,
+    "title": "Extend the expanded ACA premium tax credits",
+    "question": "On the Cloture Motion to proceed to S. 3385",
+    "yes_means": "Yes was a vote to move forward a bill extending the enhanced premium tax credits that lower the cost of Affordable Care Act marketplace insurance. It needed 60 votes and got 51.",
+    "coverage_side": "yea",
+    "source_url": "https://www.senate.gov/legislative/LIS/roll_call_votes/vote1191/vote_119_1_00644.htm"
+  }
+]

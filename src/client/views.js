@@ -340,3 +340,92 @@ export function bindZip() {
 		catch { toast("Couldn't copy. Select the text and copy it instead.", true); }
 	});
 }
+
+// ------------------------------------------------------------------ key health votes
+const VOTE_LABEL = { yea: "Yes", nay: "No", present: "Present", not_voting: "Didn't vote" };
+let voteIndex = null;
+function votesByMember() {
+	if (!voteIndex || voteIndex.src !== S.data.member_votes) {
+		const m = new Map();
+		for (const [vid, pid, v] of S.data.member_votes || []) {
+			if (!m.has(pid)) m.set(pid, {});
+			m.get(pid)[vid] = v;
+		}
+		voteIndex = { src: S.data.member_votes, m };
+	}
+	return voteIndex.m;
+}
+const visibleVotes = () => (S.data.key_votes || []).filter((v) => S.admin || !v.hidden);
+// "protected" = voted the way that protects or expands coverage on that vote.
+const sideOf = (v, vote) => (vote === "yea" || vote === "nay" ? (vote === v.coverage_side ? "pro" : "anti") : "none");
+
+export function voteScore(id) {
+	const mine = votesByMember().get(id);
+	if (!mine) return null;
+	let pro = 0, cast = 0;
+	for (const v of visibleVotes().filter((x) => !x.hidden)) {
+		const s = sideOf(v, mine[v.id]);
+		if (s !== "none") { cast++; if (s === "pro") pro++; }
+	}
+	return cast ? { pro, cast } : null;
+}
+
+export function votesBox(p) {
+	const votes = visibleVotes().filter((v) => !v.hidden);
+	if (!votes.length) return "";
+	const mine = votesByMember().get(p.id) || {};
+	const rows = votes.map((v) => {
+		const vote = mine[v.id];
+		const s = sideOf(v, vote);
+		const cell = vote ? `<span class="vchip ${s}">${h(VOTE_LABEL[vote] || vote)}</span>` : `<span class="note">${p.chamber === v.chamber ? "Not in office yet" : "Other chamber"}</span>`;
+		return `<tr><td><span class="note">${h(fmtDate(v.date))} · ${v.chamber === "senate" ? "Senate" : "House"}</span><br><a href="#/votes" class="iname">${h(v.title)}</a></td><td>${cell}</td></tr>`;
+	}).join("");
+	const sc = voteScore(p.id);
+	return `<h3>Key health votes <small>${sc ? `protected coverage on ${sc.pro} of ${sc.cast}` : "no votes cast on these"}</small></h3>
+		<table class="t kvotes"><tr><th>Vote</th><th>How they voted</th></tr>${rows}</table>
+		<p class="note"><span class="vchip pro">Green</span> = voted the way that protects or expands health coverage; <span class="vchip anti">red</span> = the other way. <a href="#/votes">What each vote was about</a>.</p>`;
+}
+
+export function renderVotes() {
+	const votes = visibleVotes();
+	const vm = votesByMember();
+	const pol = (id) => S.byId.get(id);
+	const body = votes.map((v) => {
+		const t = v.tally || {};
+		const party = { D: { yea: 0, nay: 0 }, R: { yea: 0, nay: 0 }, I: { yea: 0, nay: 0 } };
+		const pro = [], anti = [];
+		for (const [pid, mv] of vm) {
+			const vote = mv[v.id];
+			if (!vote) continue;
+			const p = pol(pid);
+			if (p && party[p.party] && (vote === "yea" || vote === "nay")) party[p.party][vote]++;
+			const s = sideOf(v, vote);
+			if (p && s === "pro") pro.push(p); else if (p && s === "anti") anti.push(p);
+		}
+		const names = (list) => list.sort((a, b) => a.last.localeCompare(b.last)).map((p) => `<a href="#/p/${h(p.id)}" class="vname">${h(p.name)} <span class="party ${h(p.party)}">${h(p.party)}</span>${p.status === "departing" ? " <span class='tag'>Leaving</span>" : ""}</a>`).join("");
+		const side = v.coverage_side === "yea" ? "Yes" : "No";
+		return `<article class="card kvote${v.hidden ? " hiddenv" : ""}" id="vote-${h(v.id)}">
+			<div class="note">${h(fmtDate(v.date))} · ${v.chamber === "senate" ? "Senate" : "House"} · ${h(v.question || "")}</div>
+			<h3>${h(v.title)}</h3>
+			<p>${h(v.yes_means || "")}</p>
+			<div class="kv"><div><b>${t.yea || 0}–${t.nay || 0}</b><span>Yes–No</span></div>
+				${Object.entries(party).filter(([, c]) => c.yea + c.nay).map(([k, c]) => `<div><b>${c.yea}–${c.nay}</b><span>${h(PARTY[k])}s</span></div>`).join("")}</div>
+			<p class="note">Protecting coverage on this vote meant voting <b>${side}</b>. <a href="${url(v.source_url)}" target="_blank" rel="noopener">Official roll call ↗</a></p>
+			<details class="admin"><summary>Voted to protect coverage (${pro.length})</summary><div class="vnames">${names(pro)}</div></details>
+			<details class="admin"><summary>Voted the other way (${anti.length})</summary><div class="vnames">${names(anti)}</div></details>
+			${S.admin ? `<details class="admin"><summary>Edit this vote</summary><form class="form" data-form="keyvote" data-id="${h(v.id)}">
+				<label>Title<input type="text" name="title" value="${h(v.title || "")}"></label>
+				<label>What a Yes vote meant<textarea name="yes_means">${h(v.yes_means || "")}</textarea></label>
+				<div class="grid"><label>Vote that protects coverage<select name="coverage_side"><option value="yea"${v.coverage_side === "yea" ? " selected" : ""}>Yes</option><option value="nay"${v.coverage_side === "nay" ? " selected" : ""}>No</option></select></label>
+				<label>Show on site<select name="hidden"><option value="0"${v.hidden ? "" : " selected"}>Shown</option><option value="1"${v.hidden ? " selected" : ""}>Hidden</option></select></label>
+				<label>Source link<input type="url" name="source_url" value="${h(v.source_url || "")}"></label></div>
+				<div class="actions"><button class="btn primary small">Save vote</button></div></form></details>` : ""}
+		</article>`;
+	}).join("");
+	$("#app").innerHTML = `${chrome()}<main class="wrap">
+		<div class="section-title"><h2>Key health votes</h2><span>119th Congress · recorded roll calls</span></div>
+		<p class="lede">The big recorded votes on health coverage in 2025–26, and how every member voted. Newcomers sworn in January 2027 weren't in Congress for these.</p>
+		<div class="kvotes-list">${body || `<p class="empty">No key votes yet.</p>`}</div>
+		<p class="note">Votes from <a href="https://voteview.com" target="_blank" rel="noopener">Voteview</a>, checked against the official Senate and House Clerk roll calls. Descriptions are written from the official vote text. Totals are the official counts; the name lists and party splits leave out a few members who have since left Congress, and show each member's current party.</p>
+	</main>${footer()}`;
+}

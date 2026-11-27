@@ -1,6 +1,7 @@
 import { renderAdmin, adminProfileTools, bindAdmin } from "./admin.js";
 import { shareButtons, bindShare } from "./share.js";
-import { mapHtml, stateHtml, renderIssues, renderElections, issueMatrix, leanBox, LEAN, bindViews, zipBox, renderZip, bindZip } from "./views.js";
+import { renderMoney, alignmentBox, moneyWeb, votingRecord, bindMoney } from "./money.js";
+import { mapHtml, stateHtml, renderIssues, renderElections, issueMatrix, leanBox, LEAN, bindViews, zipBox, renderZip, bindZip, votesBox, renderVotes, voteScore } from "./views.js";
 
 export const STANCE = {
 	supports: "Supports",
@@ -170,6 +171,7 @@ function filtered() {
 		state: (a, b) => a.state.localeCompare(b.state) || (a.district || 0) - (b.district || 0),
 		health: (a, b) => (b.health_total || 0) - (a.health_total || 0),
 		healthemp: (a, b) => (b.health_emp || 0) - (a.health_emp || 0),
+		votes: (a, b) => { const x = voteScore(a.id), y = voteScore(b.id); return (x ? x.pro / x.cast : 2) - (y ? y.pro / y.cast : 2) || a.last.localeCompare(b.last); },
 		outside: (a, b) => (b.outside_support + b.outside_oppose) - (a.outside_support + a.outside_oppose),
 		pacs: (a, b) => (b.pacs || 0) - (a.pacs || 0),
 		election: (a, b) => (a.next_election || "9").localeCompare(b.next_election || "9") || a.last.localeCompare(b.last),
@@ -184,7 +186,8 @@ function listHtml() {
 	if (!rows.length) return `<p class="empty">Nobody matches those filters.</p>`;
 	return rows.map((p) => {
 		const st = stanceOf(p.id);
-		const extra = S.f.sort === "healthemp" ? `${short(p.health_emp || 0)} from health-industry employees` : S.f.sort === "outside" ? `${short(p.outside_support + p.outside_oppose)} outside $`
+		const vs = S.f.sort === "votes" ? voteScore(p.id) : null;
+		const extra = S.f.sort === "votes" ? (vs ? `protected coverage on ${vs.pro} of ${vs.cast} key votes` : "no key votes") : S.f.sort === "healthemp" ? `${short(p.health_emp || 0)} from health-industry employees` : S.f.sort === "outside" ? `${short(p.outside_support + p.outside_oppose)} outside $`
 			: S.f.sort === "pacs" ? `${short(p.pacs || 0)} from PACs`
 			: p.health_total > 0 ? `${short(p.health_total)} health-industry PACs` : "";
 		return `<button class="row" style="--stance:var(--s-${st})" data-id="${h(p.id)}">
@@ -275,7 +278,7 @@ function renderMain() {
 			<select data-f="state" aria-label="State">${opt("", "All states", S.f.state)}${states.map((s) => opt(s, s, S.f.state)).join("")}</select>
 			<select data-f="lean" aria-label="Lean">${opt("", "Any lean", S.f.lean)}${Object.entries(LEAN).map(([k, v]) => opt(k, v, S.f.lean)).join("")}</select>
 			<select data-f="cohort" aria-label="Cohort">${opt("", next ? "New and returning" : "Everyone", S.f.cohort)}${next ? opt("new", "New in 2027", S.f.cohort) + opt("returning", "Returning", S.f.cohort) : opt("departing", "Leaving in January", S.f.cohort)}${elections.map((y) => opt(y, `Up for re-election in ${y}`, S.f.cohort)).join("")}</select>
-			<select data-f="sort" aria-label="Sort">${opt("name", "Sort: name", S.f.sort)}${opt("election", "Sort: next election", S.f.sort)}${opt("state", "Sort: state", S.f.sort)}${opt("health", "Sort: health-industry PAC $", S.f.sort)}${opt("healthemp", "Sort: health-industry employee $", S.f.sort)}${opt("pacs", "Sort: all PAC $", S.f.sort)}${opt("outside", "Sort: outside spending", S.f.sort)}</select>
+			<select data-f="sort" aria-label="Sort">${opt("name", "Sort: name", S.f.sort)}${opt("election", "Sort: next election", S.f.sort)}${opt("state", "Sort: state", S.f.sort)}${opt("health", "Sort: health-industry PAC $", S.f.sort)}${opt("healthemp", "Sort: health-industry employee $", S.f.sort)}${opt("votes", "Sort: worst health voting record", S.f.sort)}${opt("pacs", "Sort: all PAC $", S.f.sort)}${opt("outside", "Sort: outside spending", S.f.sort)}</select>
 			<label class="check"><input type="checkbox" id="health"${S.f.health ? " checked" : ""}> Takes health-industry PAC money</label>
 			<label class="check"><input type="checkbox" id="hcmte"${S.f.hcmte ? " checked" : ""}> Sits on a health committee</label>
 		</div>
@@ -287,7 +290,7 @@ function renderMain() {
 export const chromeOnly = () => chrome();
 export const chrome = () => `${S.admin ? `<div class="adminbar"><div class="wrap"><span>Signed in as admin — edit controls are visible on every profile.</span><span><a href="#/admin">Admin panel</a> · <a href="#" data-logout>Sign out</a></span></div></div>` : ""}
 	<div class="wrap"><header class="top"><a class="brand" href="#/">Who Stands <span>In The Way</span></a>
-	<nav><a class="btn ghost" href="#/">Dashboard</a><a class="btn ghost" href="#/zip">Find your rep</a><a class="btn ghost" href="#/issues">Issues</a><a class="btn ghost" href="#/elections">2026 results</a><a class="btn" href="#/admin">${S.admin ? "Admin panel" : "Admin"}</a></nav></header></div>`;
+	<nav><a class="btn ghost" href="#/">Dashboard</a><a class="btn ghost" href="#/zip">Find your rep</a><a class="btn ghost" href="#/votes">Key votes</a><a class="btn ghost" href="#/money">Money</a><a class="btn ghost" href="#/issues">Issues</a><a class="btn ghost" href="#/elections">2026 results</a><a class="btn" href="#/admin">${S.admin ? "Admin panel" : "Admin"}</a></nav></header></div>`;
 export const footer = () => `<footer><div class="wrap">Baseline: the Congress sworn in January 3, 2027, from <a href="${url(S.data.meta?.roster_source || "https://en.wikipedia.org/wiki/120th_United_States_Congress")}" target="_blank" rel="noopener">Wikipedia's 120th Congress roster</a> (checked against Wikidata); returning members' accounts from the <a href="https://github.com/unitedstates/congress-legislators" target="_blank" rel="noopener">congress-legislators</a> project; returning members' support = sponsors and cosponsors of the 119th Congress bill on <a href="https://www.congress.gov/bill/119th-congress/house-bill/3069" target="_blank" rel="noopener">congress.gov</a>; money from <a href="https://www.fec.gov/data/browse-data/?tab=bulk-data" target="_blank" rel="noopener">FEC bulk filings</a> (2025–26 cycle); lean starts from each member's voting record (<a href="https://voteview.com" target="_blank" rel="noopener">Voteview</a> DW-NOMINATE, 119th Congress) and can be overridden by hand; newcomers' stances researched from campaign statements in November 2026 and linked to their source. "Not on record" means not a cosponsor and nothing documented yet. Everything after the baseline is maintained by hand.</div></footer>`;
 
 // ------------------------------------------------------------------ profile drawer
@@ -356,6 +359,9 @@ async function openProfile(id) {
 			}).join("")}
 			${p.notes ? `<p class="note">${h(p.notes)}</p>` : ""}
 			${leanBox(p)}
+			${alignmentBox(f)}
+			${votesBox(p)}
+			<div id="vrec"><h3>Full voting record</h3><p class="note">Loading…</p></div>
 			${issueMatrix(p, d.issue_positions || [])}
 			<h3>On the record <small>${d.appearances.length} documented: shows, quotes, votes, posts</small></h3>
 			<div class="feed">${d.appearances.map((a) => appHtml(a, false)).join("") || `<p class="note">No appearances documented yet.</p>`}</div>
@@ -379,6 +385,7 @@ async function openProfile(id) {
 			${moneyHtml}
 			${d.donors.length ? `<h3>Documented by hand</h3><table class="t"><tr><th>Donor</th><th>Type</th><th class="n">Amount</th><th></th></tr>${d.donors.map((x) => `<tr><td>${x.source_url ? `<a href="${url(x.source_url)}" target="_blank" rel="noopener">${h(x.donor_name)}</a>` : h(x.donor_name)}${x.sector ? ` <span class="tag">${h(x.sector)}</span>` : ""}${x.notes ? `<br><span class="note">${h(x.notes)}</span>` : ""}</td><td>${h(x.donor_type || "")}${x.cycle ? ` · ${h(x.cycle)}` : ""}</td><td class="n">${x.amount != null ? money(x.amount) : "—"}</td><td>${S.admin ? `<button class="btn small danger" data-del="donors" data-delid="${x.id}">Delete</button>` : ""}</td></tr>`).join("")}</table>` : ""}
 			${S.admin ? adminProfileTools.donor(p) : ""}
+			<div id="pwebwrap"></div>
 			<h3>Dig deeper</h3>
 			<div class="links">${p.opensecrets_id ? link("https://www.opensecrets.org/members-of-congress/summary?cid=" + encodeURIComponent(p.opensecrets_id), "OpenSecrets: donors by industry") : ""}
 				${fec.map((id) => link("https://www.fec.gov/data/candidate/" + encodeURIComponent(id) + "/", "FEC " + id)).join("")}
@@ -389,6 +396,8 @@ async function openProfile(id) {
 			${S.admin ? adminProfileTools.edit(p) : ""}
 		</div>`;
 	dlg.dataset.id = p.id;
+	votingRecord(dlg.querySelector("#vrec"), p);
+	moneyWeb(dlg.querySelector("#pwebwrap"), p, f);
 	if (!dlg.open) dlg.showModal();
 	dlg.scrollTop = dlg.dataset.keep === p.id ? Number(dlg.dataset.scroll || 0) : 0;
 	delete dlg.dataset.keep;
@@ -412,6 +421,8 @@ function route() {
 		if (page.startsWith("#/admin")) renderAdmin();
 		else if (page.startsWith("#/issues")) renderIssues();
 		else if (page.startsWith("#/elections")) renderElections(page.split("/")[2] || "");
+		else if (page.startsWith("#/votes")) renderVotes();
+		else if (page.startsWith("#/money")) renderMoney(page.split("/").slice(2));
 		else if (page.startsWith("#/zip")) renderZip(decodeURIComponent(page.split("/")[2] || ""));
 		else renderMain();
 		route.view = page;
@@ -466,6 +477,7 @@ function bind() {
 	bindViews();
 	bindZip();
 	bindShare();
+	bindMoney();
 }
 
 load().then(() => { bind(); route(); }).catch((e) => { $("#app").innerHTML = `<p class="loading">Couldn't load data: ${h(e.message)}</p>`; });

@@ -40,6 +40,10 @@ const SCHEMA = [
 		sector TEXT, amount REAL, cycle TEXT, source_url TEXT, notes TEXT)`,
 	`CREATE TABLE IF NOT EXISTS finance (politician_id TEXT PRIMARY KEY, as_of TEXT, data TEXT)`,
 	`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`,
+	`CREATE TABLE IF NOT EXISTS key_votes (
+		id TEXT PRIMARY KEY, chamber TEXT, rollnumber INTEGER, date TEXT, sort INTEGER, title TEXT, question TEXT,
+		yes_means TEXT, coverage_side TEXT, source_url TEXT, tally TEXT, hidden INTEGER DEFAULT 0)`,
+	`CREATE TABLE IF NOT EXISTS member_votes (vote_id TEXT NOT NULL, politician_id TEXT NOT NULL, vote TEXT, PRIMARY KEY (vote_id, politician_id))`,
 	`CREATE INDEX IF NOT EXISTS idx_app_pol ON appearances (politician_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_donor_pol ON donors (politician_id)`,
 ];
@@ -54,6 +58,7 @@ const COLS = {
 	issues: ["id", "name", "description", "rank"],
 	issue_polls: ["issue_id", "pollster", "date", "stat", "url"],
 	issue_positions: ["politician_id", "issue_id", "position", "note", "source_url", "updated_at"],
+	key_votes: ["id", "chamber", "rollnumber", "date", "sort", "title", "question", "yes_means", "coverage_side", "source_url", "tally"],
 	policies: ["id", "name", "description", "is_primary", "sort", "bill_house", "bill_senate", "url"],
 	positions: ["politician_id", "policy_id", "stance", "note", "source_url", "updated_at"],
 	outlets: ["name", "kind", "website", "logo_url", "contact_url", "notes"],
@@ -121,6 +126,12 @@ async function init(db) {
 	bulk("INSERT OR IGNORE INTO issues (%COLS%) SELECT %SEL% FROM json_each(?)", COLS.issues, seed.issues || [], 100);
 	stmts.push(db.prepare("DELETE FROM issue_polls WHERE seeded = 1"));
 	bulk("INSERT INTO issue_polls (%COLS%, seeded) SELECT %SEL%, 1 FROM json_each(?)", COLS.issue_polls, seed.issue_polls || [], 150);
+	// Key votes: your edits to the wording, side or visibility are kept; tallies refresh.
+	bulk("INSERT INTO key_votes (%COLS%) SELECT %SEL% FROM json_each(?) WHERE 1 ON CONFLICT (id) DO UPDATE SET tally = excluded.tally",
+		COLS.key_votes, (seed.key_votes || []).map((v) => ({ ...v, tally: JSON.stringify(v.tally || {}) })), 50);
+	stmts.push(db.prepare("DELETE FROM member_votes"));
+	bulk("INSERT INTO member_votes (vote_id, politician_id, vote) SELECT json_extract(value,'$.vote_id'), json_extract(value,'$.politician_id'), json_extract(value,'$.vote') FROM json_each(?)",
+		[], seed.member_votes || [], 400);
 	stmts.push(db.prepare("DELETE FROM finance"));
 	bulk("INSERT INTO finance (%COLS%) SELECT %SEL% FROM json_each(?)", ["politician_id", "as_of", "data"], seed.finance.map((f) => ({ ...f, data: JSON.stringify(f.data) })), 60);
 	stmts.push(db.prepare("INSERT INTO meta (key, value) VALUES ('seed_version', ?), ('seed_meta', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").bind(seed.version, JSON.stringify(seed.meta || {})));
@@ -175,7 +186,7 @@ const URL_FIELDS = ["post_url", "website", "contact_form", "logo_url", "contact_
 const badUrl = (row) => URL_FIELDS.find((f) => row[f] != null && !safeUrl(String(row[f])));
 
 async function bootstrap(db) {
-	const [pols, policies, positions, outlets, apps, meta, terms, issues, polls] = await db.batch([
+	const [pols, policies, positions, outlets, apps, meta, terms, issues, polls, kv, mv] = await db.batch([
 		db.prepare(`SELECT p.id, p.name, p.last, p.chamber, p.role, p.state, p.district, p.party, p.voting, p.status,
 			p.term_end, p.next_election, p.photo_url, p.twitter, p.lean, p.ideology, p.phone, p.phone_label,
 			EXISTS (SELECT 1 FROM json_each(COALESCE(p.committees,'[]')) WHERE json_extract(value,'$.health') = 1) AS health_cmte,
@@ -195,9 +206,13 @@ async function bootstrap(db) {
 		db.prepare("SELECT * FROM terms"),
 		db.prepare("SELECT * FROM issues ORDER BY rank, name"),
 		db.prepare("SELECT * FROM issue_polls ORDER BY date DESC"),
+		db.prepare("SELECT * FROM key_votes ORDER BY date, sort"),
+		db.prepare("SELECT vote_id, politician_id, vote FROM member_votes"),
 	]);
 	return { meta: JSON.parse(meta.results[0]?.value || "{}"), terms: terms.results, issues: issues.results,
-		issue_polls: polls.results, scale: SCALE, politicians: pols.results, policies: policies.results, positions: positions.results,
+		issue_polls: polls.results, scale: SCALE,
+		key_votes: kv.results.map((v) => ({ ...v, tally: JSON.parse(v.tally || "{}") })),
+		member_votes: mv.results.map((m) => [m.vote_id, m.politician_id, m.vote]), politicians: pols.results, policies: policies.results, positions: positions.results,
 		outlets: outlets.results, appearances: apps.results, stances: STANCES };
 }
 
@@ -249,6 +264,18 @@ async function admin(req, env, parts) {
 		if (!SCALE.includes(body.lean)) return fail(400, "Pick a valid lean");
 		const note = typeof body.lean_note === "string" ? body.lean_note.trim() || null : null;
 		await db.prepare("UPDATE politicians SET lean = ?, lean_note = ?, lean_source = 'admin' WHERE id = ?").bind(body.lean, note, id).run();
+		return json({ ok: true });
+	}
+	if (table === "key_votes" && method === "PUT" && id) {
+		const allowed = ["title", "question", "yes_means", "coverage_side", "source_url", "sort", "hidden"];
+		const row = {};
+		for (const k of allowed) if (body[k] !== undefined) row[k] = typeof body[k] === "string" ? body[k].trim() : body[k];
+		if (row.coverage_side && !["yea", "nay"].includes(row.coverage_side)) return fail(400, "Pick which vote protects coverage");
+		if (row.hidden !== undefined) row.hidden = row.hidden ? 1 : 0;
+		if (badUrl(row)) return fail(400, "Links must start with http:// or https://");
+		const keys = Object.keys(row);
+		if (!keys.length) return fail(400, "Nothing to update");
+		await db.prepare(`UPDATE key_votes SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE id = ?`).bind(...keys.map((k) => row[k]), id).run();
 		return json({ ok: true });
 	}
 	if (!["politicians", "policies", "outlets", "appearances", "donors", "issues", "issue_polls"].includes(table)) return fail(404, "Not found");

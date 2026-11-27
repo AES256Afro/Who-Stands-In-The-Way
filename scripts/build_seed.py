@@ -133,7 +133,7 @@ for line in open(RAW / "itpas2.txt", encoding="latin-1"):
 ie_latest = {}
 with open(RAW / "independent_expenditure_2026.csv", encoding="latin-1", newline="") as fh:
     for r in csv.DictReader(fh):
-        if not r["cand_id"]:
+        if not r["cand_id"] or num(r["exp_amo"]) > 100_000_000:  # junk filings report absurd sums (largest real one: ~$28M)
             continue
         k = (r["spe_id"], r["tran_id"])
         if k not in ie_latest or int(r["file_num"] or 0) >= int(ie_latest[k]["file_num"] or 0):
@@ -575,6 +575,80 @@ for r in results2026.house(RAW / "wp_house2026.json"):
                   "pvi": r["pvi"], "result": r["result"], "candidates": r["candidates"],
                   "winner_id": seat_pid.get(("house", r["state"], r["district"] or 0)), "exit_polls": []})
 
+# ---------------------------------------------------------------- key health votes (Voteview, 119th Congress)
+key_votes = json.load(open(ROOT / "scripts" / "key_votes.json", encoding="utf-8"))
+member_votes = []
+_vv = RAW / "votes"
+if (_vv / "HS119_votes.csv").exists():
+    icpsr_bio = {}
+    with open(_vv / "HS119_members.csv", encoding="utf-8", newline="") as fh:
+        for row in csv.DictReader(fh):
+            if row["bioguide_id"]:
+                icpsr_bio[(row["chamber"], row["icpsr"])] = row["bioguide_id"]
+    want = {("Senate" if v["chamber"] == "senate" else "House", str(v["rollnumber"])): v["id"] for v in key_votes}
+    tally = collections.defaultdict(lambda: collections.Counter())
+    with open(_vv / "HS119_votes.csv", encoding="utf-8", newline="") as fh:
+        for row in csv.DictReader(fh):
+            vid = want.get((row["chamber"], row["rollnumber"]))
+            if not vid:
+                continue
+            bio = icpsr_bio.get((row["chamber"], row["icpsr"]))
+            if not bio:
+                continue
+            code = int(float(row["cast_code"]))
+            vote = "yea" if code in (1, 2, 3) else "nay" if code in (4, 5, 6) else "present" if code == 7 else "not_voting"
+            member_votes.append({"vote_id": vid, "politician_id": bio, "vote": vote})
+            tally[vid][vote] += 1
+    for v in key_votes:
+        v["tally"] = dict(tally[v["id"]])
+    known = {p["id"] for p in politicians}
+    member_votes = [m for m in member_votes if m["politician_id"] in known]
+
+# ---------------------------------------------------------------- money-vote alignment (health)
+# Not a measure of motive: it flags members who both took a lot of health-industry money (compared with
+# their own chamber) and mostly voted against coverage on the key health votes.
+side = {v["id"]: v["coverage_side"] for v in key_votes}
+chamber_of = {v["id"]: v["chamber"] for v in key_votes}
+rec = collections.defaultdict(lambda: {"pro": 0, "anti": 0, "chamber": collections.Counter()})
+for m in member_votes:
+    if m["vote"] in ("yea", "nay"):
+        r_ = rec[m["politician_id"]]
+        r_["pro" if m["vote"] == side[m["vote_id"]] else "anti"] += 1
+        r_["chamber"][chamber_of[m["vote_id"]]] += 1
+fin_by = {f["politician_id"]: f["data"] for f in finance}
+
+
+def health_money(d):
+    lead = sum(l.get("health_total", 0) for l in d.get("leadership", []))
+    return d.get("health_total", 0) + lead + d.get("employees", {}).get("total", 0)
+
+
+pools = collections.defaultdict(list)
+for pid_, r_ in rec.items():
+    if pid_ in fin_by:
+        pools[r_["chamber"].most_common(1)[0][0]].append(health_money(fin_by[pid_]))
+for k in pools:
+    pools[k].sort()
+
+
+def pct(chamber, x):
+    pool = pools[chamber]
+    return round(100 * sum(1 for v in pool if v <= x) / len(pool)) if pool else 0
+
+
+for pid_, r_ in rec.items():
+    d = fin_by.get(pid_)
+    cast_ = r_["pro"] + r_["anti"]
+    if not d or cast_ < 2:
+        continue
+    ch = r_["chamber"].most_common(1)[0][0]
+    money_ = health_money(d)
+    pc = pct(ch, money_)
+    against = r_["anti"] / cast_ >= 0.5
+    level = "low" if not against or money_ <= 0 else "very_high" if pc >= 90 else "high" if pc >= 75 else "moderate" if pc >= 50 else "low"
+    d["alignment"] = {"level": level, "anti": r_["anti"], "cast": cast_, "money": round(money_), "pct": pc, "chamber": ch}
+print("alignment", collections.Counter(d["alignment"]["level"] for d in fin_by.values() if "alignment" in d))
+
 # ---------------------------------------------------------------- issues + polling
 issues, issue_polls = [], []
 f = RAW / "research" / "issues.json"
@@ -630,7 +704,7 @@ meta = {"congresses": [{"id": 120, "label": "120th Congress (from Jan 3, 2027)"}
         "congress": "120th", "sworn_in": "2027-01-03", "undecided": undecided,
         "roster_source": f"https://en.wikipedia.org/w/index.php?title=120th_United_States_Congress&oldid={ROSTER_REV}"}
 seed = {"version": f"120b-{TODAY}-{len(positions)}-{len(issues)}-{len(exit_polls['national'])}-{len(exit_polls['senate'])}",
-        "terms": terms, "races": races, "issues": issues, "issue_polls": issue_polls, "meta": meta, "generated": TODAY, "politicians": politicians, "positions": positions, "policies": policies,
+        "terms": terms, "races": races, "key_votes": key_votes, "member_votes": member_votes, "issues": issues, "issue_polls": issue_polls, "meta": meta, "generated": TODAY, "politicians": politicians, "positions": positions, "policies": policies,
         "outlets": outlets, "finance": finance}
 # The Worker reloads the baseline whenever this version changes, so make it a fingerprint of the content.
 import hashlib
@@ -655,6 +729,7 @@ print("terms", collections.Counter(t["congress"] for t in terms), "departing", d
       "races", collections.Counter(r["chamber"] for r in races), "races w/o winner id", [(r["state"], r["district"]) for r in races if not r["winner_id"]],
       "issues", len(issues), "polls", len(issue_polls), "exit national", len(exit_polls["national"]), "exit states", len(exit_polls["senate"]))
 print("lean", collections.Counter(p["lean"] for p in politicians))
+print("key votes", [(v["id"], v.get("tally")) for v in key_votes], "member votes", len(member_votes))
 t120s = {t["politician_id"] for t in terms if t["congress"] == 120}
 m120 = [p for p in politicians if p["id"] in t120s and p["chamber"] != "executive"]
 posd = {x["politician_id"]: x for x in positions}

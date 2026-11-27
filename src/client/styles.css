@@ -273,3 +273,29 @@ details.script .sc { background: var(--surface-2); border-radius: 8px; padding: 
 
 /* share */
 .sharebar { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0; }
+
+/* key votes */
+.vchip { display: inline-block; border-radius: 6px; padding: 1px 8px; font-size: 12.5px; font-weight: 700; background: var(--surface-2); color: var(--ink); }
+.vchip.pro { background: var(--s-supports); color: #fff; }
+.vchip.anti { background: var(--s-opposes); color: #fff; }
+.kvotes-list { display: grid; gap: 12px; margin-bottom: 40px; }
+.kvote h3 { margin: 4px 0 6px; font: 700 20px/1.25 var(--serif); }
+.kvote p { margin: 0 0 10px; color: var(--ink-2); }
+.kvote .kv { margin: 6px 0 10px; }
+.hiddenv { opacity: .55; }
+.vnames { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 6px 0; }
+.vname { font-size: 13.5px; text-decoration: none; }
+
+/* money */
+.chartbox { width: 100%; min-height: 120px; margin: 8px 0 6px; overflow-x: auto; overflow-y: hidden; }
+.chartbox svg.sankey { width: 100%; height: auto; display: block; }
+svg.sankey .slabel { font: 12px var(--sans); fill: var(--ink); paint-order: stroke; stroke: var(--bg); stroke-width: 3px; }
+.tablewrap { overflow-x: auto; }
+table.matrix2 td.hcell { background: color-mix(in srgb, var(--c) calc(var(--a) * 70%), transparent); }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+@media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
+.vbox { max-height: 520px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; }
+.vchip.yes { background: color-mix(in srgb, var(--s-supports) 25%, var(--surface-2)); }
+.vchip.no { background: color-mix(in srgb, var(--s-opposes) 25%, var(--surface-2)); }
+.vchip.nv, .vchip.pres { color: var(--ink-3); }
+@media (max-width: 760px) { .chartbox svg.sankey { min-width: 720px; } }
