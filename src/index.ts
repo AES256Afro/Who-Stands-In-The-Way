@@ -45,6 +45,7 @@ const SCHEMA = [
 		old TEXT, new TEXT, note TEXT, source_url TEXT, actor TEXT, hidden INTEGER DEFAULT 0)`,
 	`CREATE INDEX IF NOT EXISTS idx_changes_pol ON changes (politician_id, at)`,
 	`CREATE INDEX IF NOT EXISTS idx_changes_at ON changes (at)`,
+	`CREATE TABLE IF NOT EXISTS login_attempts (ip TEXT PRIMARY KEY, fails INTEGER, window_start INTEGER, locked_until INTEGER)`,
 	`CREATE TABLE IF NOT EXISTS x_cache (handle TEXT PRIMARY KEY, user_id TEXT, fetched_at INTEGER, data TEXT)`,
 	`CREATE TABLE IF NOT EXISTS key_votes (
 		id TEXT PRIMARY KEY, chamber TEXT, rollnumber INTEGER, date TEXT, sort INTEGER, title TEXT, question TEXT,
@@ -556,11 +557,24 @@ export default {
 			if (parts[0] === "me") return json({ admin: await isAdmin(req, env), configured: !!env.ADMIN_PASSWORD });
 			if (parts[0] === "login" && req.method === "POST") {
 				if (!env.ADMIN_PASSWORD) return fail(503, "Admin password is not configured for this deployment");
+				// Lockout: 10 wrong passwords from one address within 15 minutes blocks it for 15 minutes.
+				const ip = req.headers.get("cf-connecting-ip") || "local";
+				const t = Date.now(), WINDOW = 15 * 60 * 1000;
+				const rec = await env.DB.prepare("SELECT fails, window_start, locked_until FROM login_attempts WHERE ip = ?").bind(ip).first();
+				if (rec?.locked_until && rec.locked_until > t) {
+					return json({ error: `Too many wrong passwords. Try again in ${Math.ceil((rec.locked_until - t) / 60000)} minutes.` }, 429);
+				}
 				const { password } = await req.json().catch(() => ({}));
 				if (typeof password !== "string" || !(await safeEqual(password, env.ADMIN_PASSWORD))) {
+					const fresh = !rec || t - rec.window_start > WINDOW;
+					const fails = fresh ? 1 : rec.fails + 1;
+					await env.DB.prepare(`INSERT INTO login_attempts (ip, fails, window_start, locked_until) VALUES (?,?,?,?)
+						ON CONFLICT (ip) DO UPDATE SET fails = excluded.fails, window_start = excluded.window_start, locked_until = excluded.locked_until`)
+						.bind(ip, fails, fresh ? t : rec.window_start, fails >= 10 ? t + WINDOW : null).run();
 					await new Promise((r) => setTimeout(r, 600));
 					return fail(401, "Wrong password");
 				}
+				if (rec) await env.DB.prepare("DELETE FROM login_attempts WHERE ip = ?").bind(ip).run();
 				return json({ ok: true }, 200, { "set-cookie": cookie(req, await makeToken(env), 60 * 60 * 24 * 14) });
 			}
 			if (parts[0] === "logout" && req.method === "POST") return json({ ok: true }, 200, { "set-cookie": cookie(req, "", 0) });
