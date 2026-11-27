@@ -10,7 +10,7 @@ const SCHEMA = [
 		term_start TEXT, term_end TEXT, website TEXT, contact_form TEXT, phone TEXT, office TEXT,
 		next_election TEXT, twitter TEXT, twitter_alt TEXT, facebook TEXT, instagram TEXT, youtube TEXT, bluesky TEXT, mastodon TEXT,
 		opensecrets_id TEXT, fec_ids TEXT, govtrack_id INTEGER, wikipedia TEXT, ballotpedia TEXT, photo_url TEXT, notes TEXT,
-		lean TEXT, ideology REAL, lean_note TEXT, lean_source TEXT)`,
+		lean TEXT, ideology REAL, lean_note TEXT, lean_source TEXT, phone_label TEXT, offices TEXT, committees TEXT)`,
 	`CREATE TABLE IF NOT EXISTS terms (
 		politician_id TEXT NOT NULL, congress INTEGER NOT NULL, chamber TEXT, state TEXT, district INTEGER, party TEXT,
 		voting INTEGER, role TEXT, PRIMARY KEY (politician_id, congress))`,
@@ -48,7 +48,7 @@ const COLS = {
 	politicians: ["id", "name", "first", "last", "chamber", "role", "state", "district", "party", "caucus", "voting",
 		"status", "term_start", "term_end", "next_election", "website", "contact_form", "phone", "office", "twitter", "twitter_alt",
 		"facebook", "instagram", "youtube", "bluesky", "mastodon", "opensecrets_id", "fec_ids", "govtrack_id",
-		"wikipedia", "ballotpedia", "photo_url", "notes", "lean", "ideology", "lean_note"],
+		"wikipedia", "ballotpedia", "photo_url", "notes", "lean", "ideology", "lean_note", "phone_label", "offices", "committees"],
 	terms: ["politician_id", "congress", "chamber", "state", "district", "party", "voting", "role"],
 	races: ["chamber", "state", "district", "special", "pvi", "result", "candidates", "winner_id", "exit_polls"],
 	issues: ["id", "name", "description", "rank"],
@@ -80,6 +80,9 @@ const MIGRATIONS = [
 	"ALTER TABLE politicians ADD COLUMN ideology REAL",
 	"ALTER TABLE politicians ADD COLUMN lean_note TEXT",
 	"ALTER TABLE politicians ADD COLUMN lean_source TEXT",
+	"ALTER TABLE politicians ADD COLUMN phone_label TEXT",
+	"ALTER TABLE politicians ADD COLUMN offices TEXT",
+	"ALTER TABLE politicians ADD COLUMN committees TEXT",
 ];
 
 async function init(db) {
@@ -174,7 +177,8 @@ const badUrl = (row) => URL_FIELDS.find((f) => row[f] != null && !safeUrl(String
 async function bootstrap(db) {
 	const [pols, policies, positions, outlets, apps, meta, terms, issues, polls] = await db.batch([
 		db.prepare(`SELECT p.id, p.name, p.last, p.chamber, p.role, p.state, p.district, p.party, p.voting, p.status,
-			p.term_end, p.next_election, p.photo_url, p.twitter, p.lean, p.ideology,
+			p.term_end, p.next_election, p.photo_url, p.twitter, p.lean, p.ideology, p.phone, p.phone_label,
+			EXISTS (SELECT 1 FROM json_each(COALESCE(p.committees,'[]')) WHERE json_extract(value,'$.health') = 1) AS health_cmte,
 			json_extract(f.data,'$.health_total') AS health_total,
 			json_extract(f.data,'$.totals.receipts') AS receipts,
 			json_extract(f.data,'$.totals.pacs') AS pacs,
@@ -247,7 +251,7 @@ async function admin(req, env, parts) {
 		return json({ ok: true });
 	}
 	if (!["politicians", "policies", "outlets", "appearances", "donors", "issues", "issue_polls"].includes(table)) return fail(404, "Not found");
-	if (table === "politicians") { delete body.lean; delete body.lean_note; delete body.ideology; }
+	if (table === "politicians") { delete body.lean; delete body.lean_note; delete body.ideology; delete body.offices; delete body.committees; }
 	const textKey = table === "politicians" || table === "policies" || table === "issues";
 
 	if (method === "POST") {

@@ -84,10 +84,23 @@ SECTORS = [
         r"BIOTECHNOLOGY INNOVATION|GENENTECH|BOEHRINGER|ASTELLAS|OTSUKA|VIATRIS|MODERNA|DAIICHI|\bEISAI\b|"
         r"ABBOTT LAB|ALKERMES|EMD SERONO|LUNDBECK|MALLINCKRODT|\bROCHE\b|MCKESSON|CARDINAL HEALTH|CENCORA|"
         r"AMERISOURCEBERGEN")),
+    ("devices", re.compile(
+        r"MEDTRONIC|ADVAMED|ADVANCED MEDICAL TECHNOLOGY|BOSTON SCIENTIFIC|STRYKER|BECTON|BAXTER|ZIMMER|"
+        r"INTUITIVE SURGICAL|EDWARDS LIFESCIENCES|HOLOGIC|GE HEALTHCARE|SIEMENS HEALTHINEERS|DEXCOM|RESMED|"
+        r"SMITH (?:&|AND) NEPHEW|MEDICAL DEVICE|MEDICAL IMAGING|DIAGNOSTIC")),
+    ("providers", re.compile(
+        r"DAVITA|FRESENIUS|DIALYSIS|LABCORP|LABORATORY CORP|QUEST DIAGNOSTICS|CLINICAL LABORATORY|"
+        r"AMERICAN HEALTH CARE ASSOCIATION|NURSING HOME|LONG.TERM CARE|HOME CARE|HOME HEALTH|HOSPICE|"
+        r"ENVISION|TEAMHEALTH|SURGERY CENTER|AMBULATORY SURGERY|ASSISTED LIVING")),
+    ("doctors", re.compile(
+        r"AMERICAN MEDICAL ASSOCIATION|MEDICAL ASSOCIATION|MEDICAL SOCIETY|PHYSICIANS|ANESTHESIOLOGISTS|RADIOLOG|"
+        r"COLLEGE OF SURGEONS|ORTHOPAEDIC|ORTHOPEDIC|DERMATOLOG|CARDIOLOG|UROLOG|OPHTHALMOLOG|ONCOLOG|"
+        r"GASTROENTEROLOG|NEUROLOG|PATHOLOG|MEDICAL GROUP MANAGEMENT|DENTAL ASSOCIATION|OPTOMETRIC|"
+        r"CHIROPRACTIC|PODIATRIC|OSTEOPATHIC")),
     ("hospitals", re.compile(
         r"HOSPITAL|\bHCA\b|TENET HEALTH|COMMUNITY HEALTH SYSTEMS|UNIVERSAL HEALTH SERVICES|HEALTH SYSTEM")),
 ]
-NOT_HEALTH = re.compile(r"VETERINAR|ANIMAL|PET ")
+NOT_HEALTH = re.compile(r"VETERINAR|ANIMAL|PET |NURSE|UNION|WORKERS|SEIU|AFL-CIO|TEAMSTERS")  # nurses and unions back M4A
 
 
 def sector(cid, fallback_name=""):
@@ -133,6 +146,36 @@ for r in ie_latest.values():
     e = ie[r["cand_id"]][r["spe_id"]]
     e[so] += num(r["exp_amo"])
     e["name"] = r["spe_nam"]
+
+
+# Leadership PACs: the member's second fund. Committee gifts to it come from scripts/leadership_pacs.py.
+lpac_by_cand = collections.defaultdict(list)
+_lp = RAW / "lpac_agg.json"
+if _lp.exists():
+    for lid, v in json.load(open(_lp)).items():
+        for cand in v["sponsors"]:
+            lpac_by_cand[cand].append((lid, v))
+
+
+def leadership_for(fec_ids):
+    out, seen = [], set()
+    for i in fec_ids:
+        for lid, v in lpac_by_cand.get(i, []):
+            if lid in seen:
+                continue
+            seen.add(lid)
+            items = [{"id": d, "name": cm.get(d, {}).get("name") or d, "amount": a, "sector": sector(d)}
+                     for d, a in v["gifts"].items()]
+            items.sort(key=lambda x: -x["amount"])
+            sec = collections.defaultdict(float)
+            for it in items:
+                if it["sector"]:
+                    sec[it["sector"]] += it["amount"]
+            out.append({"id": lid, "name": v["name"], "total": round(sum(x["amount"] for x in items), 2),
+                        "count": len(items), "health_total": round(sum(sec.values()), 2),
+                        "health_sectors": {k: round(x, 2) for k, x in sec.items()},
+                        "health": [x for x in items if x["sector"]][:25], "top": items[:12]})
+    return out
 
 
 def finance_for(fec_ids, opensecrets):
@@ -187,6 +230,7 @@ def finance_for(fec_ids, opensecrets):
     out["outside"] = {"support": round(sum(t["support"] for t in sp), 2),
                       "oppose": round(sum(t["oppose"] for t in sp), 2),
                       "count": len(sp), "top": sp[:12]}
+    out["leadership"] = leadership_for(fec_ids)
     return out
 
 
@@ -237,6 +281,69 @@ def fec_by_name(name, chamber, state):
     exact = [c for c in cands if c[0]]
     pool = exact or (cands if len(cands) == 1 else [])
     return [max(pool, key=lambda c: c[1])[2]] if pool else []
+
+
+# ---------------------------------------------------------------- contact + committees + earlier M4A bills
+district_offices = {}
+for m in load("legislators-district-offices.json"):
+    offs = []
+    for o in m.get("offices", []):
+        addr = ", ".join(str(x) for x in [o.get("address"), o.get("suite"), o.get("building")] if x)
+        offs.append({"city": o.get("city", ""), "state": o.get("state", ""), "address": addr,
+                     "zip": str(o.get("zip") or ""), "phone": o.get("phone") or "", "fax": o.get("fax") or ""})
+    district_offices[m["id"]["bioguide"]] = sorted(offs, key=lambda x: x["city"])
+
+committee_names, HEALTH_CMTE = {}, {"HSIF", "HSWM", "SSHR", "SSFI"}
+for c in load("committees-current.json"):
+    committee_names[c["thomas_id"]] = c["name"]
+    for sub in c.get("subcommittees", []):
+        committee_names[c["thomas_id"] + sub["thomas_id"]] = f"{c['name']}: {sub['name']}"
+member_committees = collections.defaultdict(list)
+for cid, members in load("committee-membership-current.json").items():
+    name = committee_names.get(cid)
+    if not name:
+        continue
+    health = cid in HEALTH_CMTE or (len(cid) > 4 and "Health" in name.split(":", 1)[-1])
+    for mem in members:
+        member_committees[mem["bioguide"]].append({"id": cid, "name": name, "title": mem.get("title", ""),
+                                                   "health": int(bool(health)), "sub": int(len(cid) > 4)})
+for v in member_committees.values():
+    v.sort(key=lambda x: (x["id"][:4], x["sub"], x["name"]))
+
+past_bills = {}
+_pb = RAW / "m4a_past_bills.json"
+if _pb.exists():
+    for k, b in json.load(open(_pb)).items():
+        if "Medicare for All" not in (b.get("title") or ""):
+            continue
+        cg, typ, num_ = k.split("-")
+        label = f"{'H.R.' if typ == 'hr' else 'S.'}{num_} ({cg}th Congress)"
+        for sid in b["sponsors"] + [c["id"] for c in b["cosponsors"] if not c["withdrawn"]]:
+            past_bills.setdefault(sid, []).append(label)
+
+sweep = {}
+for f in sorted(glob.glob(str(RAW / "research" / "sweep" / "result*.json"))):
+    try:
+        for r_ in json.load(open(f, encoding="utf-8")):
+            sweep[r_["id"]] = r_
+    except ValueError as e:
+        print("skipping unreadable sweep file", f, e)
+SWITCHBOARD = "202-224-3121"
+
+
+def contact(bio, name, has_phone):
+    return {"offices": json.dumps(district_offices.get(bio, [])),
+            "committees": json.dumps(member_committees.get(bio, [])),
+            "phone_label": "" if has_phone else f"U.S. Capitol switchboard: ask for {name}'s office. Their direct line is assigned after Jan 3, 2027."}
+
+
+def researched(pid, rs):
+    if rs.get("stance") in ("supports", "public_option", "unclear", "opposes") and re.match(r"https?://", rs.get("source_url") or ""):
+        low = " Low confidence: verify before citing." if rs.get("confidence") == "low" else ""
+        return {"politician_id": pid, "policy_id": "m4a", "stance": rs["stance"],
+                "note": "Researched Nov 2026: " + (rs.get("note") or "").strip() + low,
+                "source_url": rs["source_url"], "updated_at": TODAY}
+    return None
 
 
 TERM_END = {1: "2031-01-03", 2: "2033-01-03", 3: "2029-01-03"}
@@ -329,7 +436,8 @@ for r in roster:
         "term_end": TERM_END[klass] if chamber == "senate" else "2029-01-03",
         "next_election": NEXT_ELECTION[klass] if chamber == "senate" else "2028-11-07",
         "website": website, "contact_form": t.get("contact_form", "") if same_seat else "",
-        "phone": t.get("phone", "") if same_seat else "",
+        "phone": (t.get("phone", "") if same_seat else "") or SWITCHBOARD,
+        **contact(bio, name, bool(t.get("phone") and same_seat)),
         "office": t.get("office", t.get("address", "")) if same_seat else "",
         "twitter": official_tw, "twitter_alt": ", ".join(alts),
         "facebook": s.get("facebook", "") or (w.get("facebook") or [""])[0],
@@ -345,12 +453,20 @@ for r in roster:
         positions.append({"politician_id": pid, "policy_id": "m4a", "stance": "supports",
                           "note": note + " The bill has to be reintroduced in the new Congress.",
                           "source_url": url, "updated_at": TODAY})
-    elif kind != "returning" and rs.get("stance") in ("supports", "public_option", "unclear", "opposes") \
-            and re.match(r"https?://", rs.get("source_url") or ""):
-        low = " Low confidence: verify before citing." if rs.get("confidence") == "low" else ""
-        positions.append({"politician_id": pid, "policy_id": "m4a", "stance": rs["stance"],
-                          "note": "Researched Nov 2026: " + (rs.get("note") or "").strip() + low,
-                          "source_url": rs["source_url"], "updated_at": TODAY})
+    elif bio in past_bills:
+        bills = ", ".join(past_bills[bio])
+        if kind == "returning":
+            positions.append({"politician_id": pid, "policy_id": "m4a", "stance": "unclear",
+                              "note": f"Researched Nov 2026: cosponsored the Medicare for All Act before ({bills}) but has not signed on to the current bill (H.R.3069 / S.1506).",
+                              "source_url": "https://www.congress.gov/bill/119th-congress/house-bill/3069/cosponsors", "updated_at": TODAY})
+        else:
+            positions.append({"politician_id": pid, "policy_id": "m4a", "stance": "supports",
+                              "note": f"Researched Nov 2026: cosponsored the Medicare for All Act during an earlier stint in Congress ({bills}).",
+                              "source_url": "https://www.congress.gov/bill/117th-congress/house-bill/1976/cosponsors", "updated_at": TODAY})
+    elif kind != "returning" and researched(pid, rs):
+        positions.append(researched(pid, rs))
+    elif researched(pid, sweep.get(pid, {})):
+        positions.append(researched(pid, sweep[pid]))
     finance.append({"politician_id": pid, "as_of": TODAY, "data": finance_for(fec_ids, "")})
 
 # ---------------------------------------------------------------- 119th Congress (current, until Jan 3 2027)
@@ -378,7 +494,8 @@ for m in legis:
         "state": t["state"], "district": t.get("district") or None, "party": party, "caucus": t.get("caucus", ""),
         "voting": voting, "status": "departing", "term_start": t["start"], "term_end": "2027-01-03",
         "next_election": "", "website": t.get("url", ""), "contact_form": t.get("contact_form", ""),
-        "phone": t.get("phone", ""), "office": t.get("office", t.get("address", "")),
+        "phone": t.get("phone", "") or SWITCHBOARD, "office": t.get("office", t.get("address", "")),
+        **contact(bio, m["name"].get("official_full") or m["name"]["last"], bool(t.get("phone"))),
         "twitter": s_.get("twitter", ""), "twitter_alt": ", ".join(sorted(h for h in wd_tw.get(bio, ()) if h.lower() != s_.get("twitter", "").lower())),
         "facebook": s_.get("facebook", ""), "instagram": s_.get("instagram", ""),
         "youtube": f"https://www.youtube.com/{yt}" if yt else "", "bluesky": wd_bsky.get(bio, ""),
@@ -445,7 +562,8 @@ for pid, name, first, last, role, site, tw, alt, note in EXEC:
         "id": pid, "name": name, "first": first, "last": last, "chamber": "executive", "role": role,
         "state": "US", "district": None, "party": "R", "caucus": "", "voting": 0, "status": "current",
         "term_start": "2025-01-20", "term_end": "2029-01-20", "next_election": "2028-11-07", "website": site, "contact_form": "",
-        "phone": "", "office": "", "twitter": tw, "twitter_alt": alt, "facebook": "", "instagram": "",
+        "phone": "202-456-1111", "phone_label": "White House comment line", "offices": "[]", "committees": "[]",
+        "office": "", "twitter": tw, "twitter_alt": alt, "facebook": "", "instagram": "",
         "youtube": "", "bluesky": "", "mastodon": "", "opensecrets_id": "", "fec_ids": "",
         "govtrack_id": None, "wikipedia": name, "ballotpedia": "", "photo_url": "", "notes": note})
 
@@ -495,4 +613,12 @@ print("terms", collections.Counter(t["congress"] for t in terms), "departing", d
       "races", collections.Counter(r["chamber"] for r in races), "races w/o winner id", [(r["state"], r["district"]) for r in races if not r["winner_id"]],
       "issues", len(issues), "polls", len(issue_polls), "exit national", len(exit_polls["national"]), "exit states", len(exit_polls["senate"]))
 print("lean", collections.Counter(p["lean"] for p in politicians))
+t120s = {t["politician_id"] for t in terms if t["congress"] == 120}
+m120 = [p for p in politicians if p["id"] in t120s and p["chamber"] != "executive"]
+posd = {x["politician_id"]: x for x in positions}
+print("120: direct phone", sum(1 for p in m120 if not p["phone_label"]), "switchboard", sum(1 for p in m120 if p["phone_label"]),
+      "with district offices", sum(1 for p in m120 if p["offices"] != "[]"), "with committees", sum(1 for p in m120 if p["committees"] != "[]"))
+print("120 stances", collections.Counter(posd[p["id"]]["stance"] if p["id"] in posd else "unknown" for p in m120))
+print("leadership PACs matched", sum(1 for f in finance if f["data"].get("leadership")),
+      "health $ via leadership", round(sum(l["health_total"] for f in finance for l in f["data"].get("leadership", []))))
 print("seed bytes", (OUT / "seed.json").stat().st_size)

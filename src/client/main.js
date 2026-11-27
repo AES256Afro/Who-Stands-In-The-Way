@@ -26,7 +26,9 @@ export const SIGNAL = {
 	opposed: ["Opposed", "opposes"],
 };
 export const PARTY = { D: "Democrat", R: "Republican", I: "Independent" };
-const SECTOR = { pharma: "Pharma", insurance: "Insurance", hospitals: "Hospitals" };
+const SECTOR = { pharma: "Pharma", insurance: "Insurance", hospitals: "Hospitals", devices: "Medical devices", providers: "Care providers", doctors: "Doctors' groups" };
+export const tel = (n) => "tel:+1" + String(n || "").replace(/\D/g, "").replace(/^1(?=\d{10}$)/, "");
+export const callBtn = (p, cls = "btn small") => (p.phone ? `<a class="${cls} call" href="${tel(p.phone)}" title="${h(p.phone_label || "Office phone")}">📞 ${h(p.phone)}</a>` : "");
 
 export const S = {
 	data: null, admin: false, configured: true, policy: null, pos: new Map(),
@@ -158,7 +160,7 @@ function filtered() {
 		(!q || `${p.name} ${p.state} ${seat(p)} ${p.twitter || ""}`.toLowerCase().includes(q)) &&
 		(!f.chamber || p.chamber === f.chamber) && (!f.party || p.party === f.party) &&
 		(!f.stance || stanceOf(p.id) === f.stance) && (!f.state || p.state === f.state) &&
-		(!f.health || p.health_total > 0) &&
+		(!f.health || p.health_total > 0) && (!f.hcmte || p.health_cmte) &&
 		(!f.lean || (p.lean || "unknown") === f.lean) &&
 		(!f.cohort || (f.cohort === "new" ? p.status === "incoming" : f.cohort === "returning" ? p.status === "current"
 			: f.cohort === "departing" ? p.status === "departing" : year(p.next_election) === f.cohort)));
@@ -272,6 +274,7 @@ function renderMain() {
 			<select data-f="cohort" aria-label="Cohort">${opt("", next ? "New and returning" : "Everyone", S.f.cohort)}${next ? opt("new", "New in 2027", S.f.cohort) + opt("returning", "Returning", S.f.cohort) : opt("departing", "Leaving in January", S.f.cohort)}${elections.map((y) => opt(y, `Up for re-election in ${y}`, S.f.cohort)).join("")}</select>
 			<select data-f="sort" aria-label="Sort">${opt("name", "Sort: name", S.f.sort)}${opt("election", "Sort: next election", S.f.sort)}${opt("state", "Sort: state", S.f.sort)}${opt("health", "Sort: health-industry PAC $", S.f.sort)}${opt("pacs", "Sort: all PAC $", S.f.sort)}${opt("outside", "Sort: outside spending", S.f.sort)}</select>
 			<label class="check"><input type="checkbox" id="health"${S.f.health ? " checked" : ""}> Takes health-industry PAC money</label>
+			<label class="check"><input type="checkbox" id="hcmte"${S.f.hcmte ? " checked" : ""}> Sits on a health committee</label>
 		</div>
 		<div class="list" id="list"></div>
 	</main>
@@ -295,6 +298,8 @@ async function openProfile(id) {
 	const tw = (handle, label) => (handle ? link("https://x.com/" + encodeURIComponent(handle), `${label} @${handle}`) : "");
 	const alts = (p.twitter_alt || "").split(",").map((s) => s.trim()).filter(Boolean);
 	const fec = (p.fec_ids || "").split(",").map((s) => s.trim()).filter(Boolean);
+	const parse = (x) => { try { return JSON.parse(x || "[]"); } catch { return []; } };
+	const offices = parse(p.offices), cmtes = parse(p.committees);
 	let moneyHtml = `<p class="note">No FEC filings matched for the 2025–26 cycle.</p>`;
 	if (f?.has_data) {
 		const t = f.totals;
@@ -302,7 +307,7 @@ async function openProfile(id) {
 		const parts = [["Individuals", t.individuals, "ind"], ["PACs", t.pacs, "pac"], ["Party", t.party, "party"], ["Self-funded", t.self, "self"], ["Other / transfers", other, "other"]].filter((x) => x[1] > 0);
 		moneyHtml = `<div class="kv">
 				<div><b>${money(t.receipts)}</b><span>Raised, ${h(f.cycle)}</span></div>
-				<div><b>${money(f.health_total)}</b><span>Health-industry PACs</span></div>
+				<div><b>${money(f.health_total + (f.leadership || []).reduce((a, l) => a + l.health_total, 0))}</b><span>Health-industry PACs (campaign + leadership PAC)</span></div>
 				<div><b>${money(f.outside.support)}</b><span>Outside $ supporting</span></div>
 				<div><b>${money(f.outside.oppose)}</b><span>Outside $ opposing</span></div>
 			</div>
@@ -315,12 +320,17 @@ async function openProfile(id) {
 				<table class="t"><tr><th>PAC</th><th class="n">Given</th></tr>${f.top_pacs.map((x) => `<tr><td><a href="https://www.fec.gov/data/committee/${h(x.id)}/" target="_blank" rel="noopener">${h(x.name)}</a>${x.sector ? ` <span class="tag">${h(SECTOR[x.sector])}</span>` : ""}</td><td class="n">${money(x.amount)}</td></tr>`).join("")}</table></details>` : ""}
 			<h3>Super PACs and outside groups <small>${f.outside.count} group${f.outside.count === 1 ? "" : "s"}</small></h3>
 			${f.outside.top.length ? `<table class="t"><tr><th>Group</th><th>Type</th><th class="n">Spent for</th><th class="n">Spent against</th></tr>${f.outside.top.map((x) => `<tr><td><a href="https://www.fec.gov/data/committee/${h(x.id)}/" target="_blank" rel="noopener">${h(x.name)}</a>${x.sector ? ` <span class="tag">${h(SECTOR[x.sector])}</span>` : ""}</td><td>${h(x.type)}</td><td class="n">${x.support ? money(x.support) : "—"}</td><td class="n">${x.oppose ? money(x.oppose) : "—"}</td></tr>`).join("")}</table>
-				<p class="note">Independent expenditures: money spent on ads and mailers about this candidate, not given to them. No contribution limits.</p>` : `<p class="note">No independent expenditures reported for or against this candidate this cycle.</p>`}`;
+				<p class="note">Independent expenditures: money spent on ads and mailers about this candidate, not given to them. No contribution limits.</p>` : `<p class="note">No independent expenditures reported for or against this candidate this cycle.</p>`}
+			${(f.leadership || []).map((l) => `<h3>Their leadership PAC <small>${h(l.name)}</small></h3>
+				<div class="kv"><div><b>${money(l.total)}</b><span>From other PACs, 2025–26</span></div><div><b>${money(l.health_total)}</b><span>From health-industry PACs</span></div></div>
+				${l.health.length ? `<table class="t"><tr><th>Health-industry PAC</th><th>Sector</th><th class="n">Given</th></tr>${l.health.map((x) => `<tr><td><a href="https://www.fec.gov/data/committee/${h(x.id)}/" target="_blank" rel="noopener">${h(x.name)}</a></td><td><span class="tag">${h(SECTOR[x.sector] || x.sector)}</span></td><td class="n">${money(x.amount)}</td></tr>`).join("")}</table>` : ""}
+				${l.top.length ? `<details class="admin"><summary>Top PAC donors to ${h(l.name)}</summary><table class="t">${l.top.map((x) => `<tr><td><a href="https://www.fec.gov/data/committee/${h(x.id)}/" target="_blank" rel="noopener">${h(x.name)}</a></td><td class="n">${money(x.amount)}</td></tr>`).join("")}</table></details>` : ""}
+				<p class="note">A leadership PAC is a second fund the member controls. PACs that already gave the campaign the legal maximum can give here too. <a href="https://www.fec.gov/data/committee/${h(l.id)}/" target="_blank" rel="noopener">FEC filing ↗</a></p>`).join("")}`;
 	}
 	dlg.innerHTML = `<div class="dhead">${avatar(p)}
 			<div style="flex:1"><h2>${h(p.name)}</h2><div class="meta"><span class="party ${h(p.party)}">${h(PARTY[p.party] || p.party)}</span> · ${h(p.role)}${p.chamber === "executive" ? "" : " · " + h(seat(p))}${p.status === "incoming" ? " · new in 2027" : ""}</div>
 				<div class="meta">${p.status === "departing" ? "Leaving Congress January 3, 2027" : `${p.term_end ? `Serving ${p.status === "incoming" || p.chamber === "house" ? "Jan 3, 2027" : "now"} – ${h(fmtDate(p.term_end))}` : ""}${p.next_election ? ` · <b>next election ${h(fmtDate(p.next_election))}</b>` : ""}`}</div></div>
-			<button class="btn" data-close aria-label="Close">Close</button></div>
+			<div class="links dact">${callBtn(p, "btn primary call")}<button class="btn" data-close aria-label="Close">Close</button></div></div>
 		<div class="dbody">
 			<h3>Where they stand</h3>
 			${S.data.policies.map((pl) => {
@@ -336,10 +346,20 @@ async function openProfile(id) {
 			<h3>On the record <small>${d.appearances.length} documented: shows, quotes, votes, posts</small></h3>
 			<div class="feed">${d.appearances.map((a) => appHtml(a, false)).join("") || `<p class="note">No appearances documented yet.</p>`}</div>
 			${S.admin ? adminProfileTools.appearance(p) : ""}
-			<h3>Find them</h3>
-			<div class="links">${link(p.website, "Official site")}${link(p.contact_form, "Contact form")}${tw(p.twitter, "Official X")}${alts.map((a) => tw(a, "Other X")).join("")}
+			<h3>Call or write them</h3>
+			<div class="contact">
+				<div><b>${p.phone_label ? "Phone" : "Washington office"}</b>${p.phone ? `<a href="${tel(p.phone)}">${h(p.phone)}</a>` : "—"}${p.phone_label ? `<span class="note">${h(p.phone_label)}</span>` : p.office ? `<span class="note">${h(p.office)}</span>` : ""}</div>
+				${offices.map((o) => `<div><b>${h(o.city)}${o.state ? ", " + h(o.state) : ""}</b>${o.phone ? `<a href="${tel(o.phone)}">${h(o.phone)}</a>` : "—"}<span class="note">${h([o.address, o.zip].filter(Boolean).join(" "))}</span></div>`).join("")}
+			</div>
+			${p.contact_form ? `<p><a class="btn small" href="${url(p.contact_form)}" target="_blank" rel="noopener">Email them (contact form) ↗</a></p>` : ""}
+			<p class="note">Tap a number to call from a phone; on a Mac it opens FaceTime or your iPhone.${offices.length ? " District offices are often easier to reach than Washington." : ""}</p>
+			${cmtes.length ? `<h3>Committees <small>119th Congress · new assignments come in January</small></h3>
+				<div class="cmtes">${cmtes.map((c) => `<span class="tag${c.health ? " healthc" : ""}">${h(c.name)}${c.title ? " · " + h(c.title) : ""}</span>`).join("")}</div>
+				${cmtes.some((c) => c.health) ? `<p class="note"><b>Sits on a committee that writes health-care law</b> (highlighted). Bills like Medicare for All go through these first.</p>` : ""}` : ""}
+			<h3>Find them online</h3>
+			<div class="links">${link(p.website, "Official site")}${tw(p.twitter, "Official X")}${alts.map((a) => tw(a, "Other X")).join("")}
 				${p.bluesky ? link("https://bsky.app/profile/" + encodeURIComponent(p.bluesky), "Bluesky") : ""}${p.facebook ? link("https://www.facebook.com/" + encodeURIComponent(p.facebook), "Facebook") : ""}${p.instagram ? link("https://www.instagram.com/" + encodeURIComponent(p.instagram), "Instagram") : ""}${link(p.youtube, "YouTube")}</div>
-			${p.phone || p.office ? `<p class="note">${h([p.phone, p.office].filter(Boolean).join(" · "))}</p>` : ""}
+
 			${alts.length ? `<p class="note">"Other X" accounts come from Wikidata and may be campaign, personal or retired handles — verify before citing.</p>` : ""}
 			<h3>Who pays them <small>FEC, ${h(f?.cycle || "2025–26")} cycle</small></h3>
 			${moneyHtml}
@@ -351,7 +371,7 @@ async function openProfile(id) {
 				${p.govtrack_id ? link("https://www.govtrack.us/congress/members/" + encodeURIComponent(p.govtrack_id), "GovTrack") : ""}
 				${p.chamber !== "executive" && !p.id.startsWith("X-") ? link("https://www.congress.gov/member/x/" + encodeURIComponent(p.id), "Congress.gov") : ""}
 				${p.wikipedia ? link("https://en.wikipedia.org/wiki/" + encodeURIComponent(p.wikipedia.replace(/ /g, "_")), "Wikipedia") : ""}</div>
-			<p class="note">Health-industry PACs are flagged by matching PAC and parent-company names (pharma and distributors, insurers and PBMs, hospitals). Donations from individual executives and employees aren't industry-coded by the FEC; OpenSecrets has that breakdown.</p>
+			<p class="note">Health-industry PACs are flagged by matching PAC and parent-company names: pharma and distributors, insurers and PBMs, hospitals, medical devices, care providers (dialysis, labs, nursing homes, physician staffing) and doctors' groups. Nurses' groups and unions are left out. Donations from individual executives and employees aren't industry-coded by the FEC; OpenSecrets has that breakdown.</p>
 			${S.admin ? adminProfileTools.edit(p) : ""}
 		</div>`;
 	dlg.dataset.id = p.id;
@@ -411,6 +431,7 @@ function bind() {
 		const t = e.target;
 		if (t.dataset.f && $("#list")) { S.f[t.dataset.f] = t.value; $("#list").innerHTML = listHtml(); }
 		if (t.id === "health") { S.f.health = t.checked; $("#list").innerHTML = listHtml(); }
+		if (t.id === "hcmte") { S.f.hcmte = t.checked; $("#list").innerHTML = listHtml(); }
 		if (t.id === "policy") { S.policy = t.value; indexPositions(); renderMain(); }
 		if (t.id === "congress") { S.congress = Number(t.value); S.mapState = ""; S.f.cohort = ""; applyCongress(); renderMain(); }
 	});
