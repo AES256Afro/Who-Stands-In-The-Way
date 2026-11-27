@@ -168,6 +168,7 @@ function filtered() {
 		name: (a, b) => a.last.localeCompare(b.last),
 		state: (a, b) => a.state.localeCompare(b.state) || (a.district || 0) - (b.district || 0),
 		health: (a, b) => (b.health_total || 0) - (a.health_total || 0),
+		healthemp: (a, b) => (b.health_emp || 0) - (a.health_emp || 0),
 		outside: (a, b) => (b.outside_support + b.outside_oppose) - (a.outside_support + a.outside_oppose),
 		pacs: (a, b) => (b.pacs || 0) - (a.pacs || 0),
 		election: (a, b) => (a.next_election || "9").localeCompare(b.next_election || "9") || a.last.localeCompare(b.last),
@@ -182,7 +183,7 @@ function listHtml() {
 	if (!rows.length) return `<p class="empty">Nobody matches those filters.</p>`;
 	return rows.map((p) => {
 		const st = stanceOf(p.id);
-		const extra = S.f.sort === "outside" ? `${short(p.outside_support + p.outside_oppose)} outside $`
+		const extra = S.f.sort === "healthemp" ? `${short(p.health_emp || 0)} from health-industry employees` : S.f.sort === "outside" ? `${short(p.outside_support + p.outside_oppose)} outside $`
 			: S.f.sort === "pacs" ? `${short(p.pacs || 0)} from PACs`
 			: p.health_total > 0 ? `${short(p.health_total)} health-industry PACs` : "";
 		return `<button class="row" style="--stance:var(--s-${st})" data-id="${h(p.id)}">
@@ -272,7 +273,7 @@ function renderMain() {
 			<select data-f="state" aria-label="State">${opt("", "All states", S.f.state)}${states.map((s) => opt(s, s, S.f.state)).join("")}</select>
 			<select data-f="lean" aria-label="Lean">${opt("", "Any lean", S.f.lean)}${Object.entries(LEAN).map(([k, v]) => opt(k, v, S.f.lean)).join("")}</select>
 			<select data-f="cohort" aria-label="Cohort">${opt("", next ? "New and returning" : "Everyone", S.f.cohort)}${next ? opt("new", "New in 2027", S.f.cohort) + opt("returning", "Returning", S.f.cohort) : opt("departing", "Leaving in January", S.f.cohort)}${elections.map((y) => opt(y, `Up for re-election in ${y}`, S.f.cohort)).join("")}</select>
-			<select data-f="sort" aria-label="Sort">${opt("name", "Sort: name", S.f.sort)}${opt("election", "Sort: next election", S.f.sort)}${opt("state", "Sort: state", S.f.sort)}${opt("health", "Sort: health-industry PAC $", S.f.sort)}${opt("pacs", "Sort: all PAC $", S.f.sort)}${opt("outside", "Sort: outside spending", S.f.sort)}</select>
+			<select data-f="sort" aria-label="Sort">${opt("name", "Sort: name", S.f.sort)}${opt("election", "Sort: next election", S.f.sort)}${opt("state", "Sort: state", S.f.sort)}${opt("health", "Sort: health-industry PAC $", S.f.sort)}${opt("healthemp", "Sort: health-industry employee $", S.f.sort)}${opt("pacs", "Sort: all PAC $", S.f.sort)}${opt("outside", "Sort: outside spending", S.f.sort)}</select>
 			<label class="check"><input type="checkbox" id="health"${S.f.health ? " checked" : ""}> Takes health-industry PAC money</label>
 			<label class="check"><input type="checkbox" id="hcmte"${S.f.hcmte ? " checked" : ""}> Sits on a health committee</label>
 		</div>
@@ -308,6 +309,7 @@ async function openProfile(id) {
 		moneyHtml = `<div class="kv">
 				<div><b>${money(t.receipts)}</b><span>Raised, ${h(f.cycle)}</span></div>
 				<div><b>${money(f.health_total + (f.leadership || []).reduce((a, l) => a + l.health_total, 0))}</b><span>Health-industry PACs (campaign + leadership PAC)</span></div>
+				<div><b>${money(f.employees?.total || 0)}</b><span>Health-industry employees</span></div>
 				<div><b>${money(f.outside.support)}</b><span>Outside $ supporting</span></div>
 				<div><b>${money(f.outside.oppose)}</b><span>Outside $ opposing</span></div>
 			</div>
@@ -318,6 +320,15 @@ async function openProfile(id) {
 				<table class="t"><tr><th>PAC</th><th>Sector</th><th class="n">Given</th></tr>${f.health_pacs.map((x) => `<tr><td><a href="https://www.fec.gov/data/committee/${h(x.id)}/" target="_blank" rel="noopener">${h(x.name)}</a></td><td><span class="tag">${h(SECTOR[x.sector])}</span></td><td class="n">${money(x.amount)}</td></tr>`).join("")}</table>` : `<p class="note">No direct gifts from pharma, insurer or hospital PACs found this cycle.</p>`}
 			${f.top_pacs.length ? `<details class="admin"><summary>Top ${f.top_pacs.length} PAC donors overall (${f.pac_count} PACs gave ${money(f.pac_itemized_total)})</summary>
 				<table class="t"><tr><th>PAC</th><th class="n">Given</th></tr>${f.top_pacs.map((x) => `<tr><td><a href="https://www.fec.gov/data/committee/${h(x.id)}/" target="_blank" rel="noopener">${h(x.name)}</a>${x.sector ? ` <span class="tag">${h(SECTOR[x.sector])}</span>` : ""}</td><td class="n">${money(x.amount)}</td></tr>`).join("")}</table></details>` : ""}
+			${(() => {
+				const e = f.employees;
+				if (!e || !e.total) return `<h3>Donations from health-industry employees</h3><p class="note">No itemized donations found from employees of drugmakers, insurers, device makers or for-profit care chains this cycle.</p>`;
+				return `<h3>Donations from health-industry employees <small>${e.donations} itemized gifts</small></h3>
+				<div class="kv"><div><b>${money(e.total)}</b><span>From people working at health companies</span></div>
+					${Object.entries(e.sectors).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<div><b>${money(v)}</b><span>${h(SECTOR[k] || k)}</span></div>`).join("")}</div>
+				<table class="t"><tr><th>Employer (as reported)</th><th>Sector</th><th class="n">Gifts</th><th class="n">Total</th></tr>${e.top.map((x) => `<tr><td>${h(x.employer)}</td><td><span class="tag">${h(SECTOR[x.sector] || x.sector)}</span></td><td class="n">${x.count}</td><td class="n">${money(x.amount)}</td></tr>`).join("")}</table>
+				<p class="note">Personal donations from employees of drugmakers, insurers and PBMs, device makers and for-profit care chains, grouped by the employer donors reported to the FEC. Only gifts over $200 are itemized. Nurses and nonprofit-hospital staff are left out. Shown as totals by employer, not by donor.</p>`;
+			})()}
 			<h3>Super PACs and outside groups <small>${f.outside.count} group${f.outside.count === 1 ? "" : "s"}</small></h3>
 			${f.outside.top.length ? `<table class="t"><tr><th>Group</th><th>Type</th><th class="n">Spent for</th><th class="n">Spent against</th></tr>${f.outside.top.map((x) => `<tr><td><a href="https://www.fec.gov/data/committee/${h(x.id)}/" target="_blank" rel="noopener">${h(x.name)}</a>${x.sector ? ` <span class="tag">${h(SECTOR[x.sector])}</span>` : ""}</td><td>${h(x.type)}</td><td class="n">${x.support ? money(x.support) : "—"}</td><td class="n">${x.oppose ? money(x.oppose) : "—"}</td></tr>`).join("")}</table>
 				<p class="note">Independent expenditures: money spent on ads and mailers about this candidate, not given to them. No contribution limits.</p>` : `<p class="note">No independent expenditures reported for or against this candidate this cycle.</p>`}

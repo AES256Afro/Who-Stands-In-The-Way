@@ -180,6 +180,7 @@ async function bootstrap(db) {
 			p.term_end, p.next_election, p.photo_url, p.twitter, p.lean, p.ideology, p.phone, p.phone_label,
 			EXISTS (SELECT 1 FROM json_each(COALESCE(p.committees,'[]')) WHERE json_extract(value,'$.health') = 1) AS health_cmte,
 			json_extract(f.data,'$.health_total') AS health_total,
+			COALESCE(json_extract(f.data,'$.employees.total'),0) AS health_emp,
 			json_extract(f.data,'$.totals.receipts') AS receipts,
 			json_extract(f.data,'$.totals.pacs') AS pacs,
 			COALESCE(json_extract(f.data,'$.outside.support'),0) AS outside_support,

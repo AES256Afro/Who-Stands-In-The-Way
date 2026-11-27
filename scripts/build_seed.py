@@ -157,6 +157,32 @@ if _lp.exists():
             lpac_by_cand[cand].append((lid, v))
 
 
+# Donations from health-industry employees (scripts/employee_donations.py): totals by employer, no names.
+emp_by_cmte, cmtes_of_cand = {}, collections.defaultdict(list)
+_ea = RAW / "emp_agg.json"
+if _ea.exists():
+    _e = json.load(open(_ea))
+    emp_by_cmte = _e["by_committee"]
+    for cmte, cand in _e["candidate_of"].items():
+        cmtes_of_cand[cand].append(cmte)
+
+
+def employees_for(cmtes):
+    merged = collections.defaultdict(lambda: {"amount": 0.0, "count": 0, "sector": ""})
+    for c in cmtes:
+        for r in emp_by_cmte.get(c, []):
+            m = merged[r["employer"]]
+            m["amount"] += r["amount"]
+            m["count"] += r["count"]
+            m["sector"] = r["sector"]
+    rows = sorted(({"employer": k, **v, "amount": round(v["amount"], 2)} for k, v in merged.items()), key=lambda r: -r["amount"])
+    sec = collections.defaultdict(float)
+    for r in rows:
+        sec[r["sector"]] += r["amount"]
+    return {"total": round(sum(sec.values()), 2), "sectors": {k: round(v, 2) for k, v in sec.items()},
+            "donations": sum(r["count"] for r in rows), "top": rows[:20]}
+
+
 def leadership_for(fec_ids):
     out, seen = [], set()
     for i in fec_ids:
@@ -171,7 +197,7 @@ def leadership_for(fec_ids):
             for it in items:
                 if it["sector"]:
                     sec[it["sector"]] += it["amount"]
-            out.append({"id": lid, "name": v["name"], "total": round(sum(x["amount"] for x in items), 2),
+            out.append({"id": lid, "name": v["name"], "employees": employees_for([lid]), "total": round(sum(x["amount"] for x in items), 2),
                         "count": len(items), "health_total": round(sum(sec.values()), 2),
                         "health_sectors": {k: round(x, 2) for k, x in sec.items()},
                         "health": [x for x in items if x["sector"]][:25], "top": items[:12]})
@@ -231,6 +257,7 @@ def finance_for(fec_ids, opensecrets):
                       "oppose": round(sum(t["oppose"] for t in sp), 2),
                       "count": len(sp), "top": sp[:12]}
     out["leadership"] = leadership_for(fec_ids)
+    out["employees"] = employees_for([c for i in fec_ids for c in cmtes_of_cand.get(i, [])])
     return out
 
 
@@ -322,7 +349,10 @@ if _pb.exists():
             past_bills.setdefault(sid, []).append(label)
 
 sweep = {}
-for f in sorted(glob.glob(str(RAW / "research" / "sweep" / "result*.json"))):
+# Later passes override earlier ones for the same person.
+for f in sorted(glob.glob(str(RAW / "research" / "sweep" / "result*.json"))) + [str(RAW / "research" / "sweep2" / "results.json")]:
+    if not pathlib.Path(f).exists():
+        continue
     try:
         for r_ in json.load(open(f, encoding="utf-8")):
             sweep[r_["id"]] = r_
@@ -337,11 +367,19 @@ def contact(bio, name, has_phone):
             "phone_label": "" if has_phone else f"U.S. Capitol switchboard: ask for {name}'s office. Their direct line is assigned after Jan 3, 2027."}
 
 
+# Sources that often summarize or infer positions (e.g. from interest-group scores) rather than quote the person.
+WEAK_SOURCES = re.compile(r"^https?://(?:www\.)?(?:ontheissues\.org|en\.wikipedia\.org|isidewith\.com)/", re.I)
+
+
 def researched(pid, rs):
     if rs.get("stance") in ("supports", "public_option", "unclear", "opposes") and re.match(r"https?://", rs.get("source_url") or ""):
-        low = " Low confidence: verify before citing." if rs.get("confidence") == "low" else ""
-        return {"politician_id": pid, "policy_id": "m4a", "stance": rs["stance"],
-                "note": "Researched Nov 2026: " + (rs.get("note") or "").strip() + low,
+        conf = "low" if WEAK_SOURCES.match(rs["source_url"]) else rs.get("confidence")
+        stance, note = rs["stance"], (rs.get("note") or "").strip()
+        if stance == "supports" and conf == "low":  # don't let thin evidence inflate the supporter count
+            stance, note = "unclear", "Reported as a supporter, but not confirmed in their own words: " + note
+        low = " Low confidence: verify before citing." if conf == "low" else ""
+        return {"politician_id": pid, "policy_id": "m4a", "stance": stance,
+                "note": "Researched Nov 2026: " + note + low,
                 "source_url": rs["source_url"], "updated_at": TODAY}
     return None
 
@@ -594,6 +632,10 @@ meta = {"congresses": [{"id": 120, "label": "120th Congress (from Jan 3, 2027)"}
 seed = {"version": f"120b-{TODAY}-{len(positions)}-{len(issues)}-{len(exit_polls['national'])}-{len(exit_polls['senate'])}",
         "terms": terms, "races": races, "issues": issues, "issue_polls": issue_polls, "meta": meta, "generated": TODAY, "politicians": politicians, "positions": positions, "policies": policies,
         "outlets": outlets, "finance": finance}
+# The Worker reloads the baseline whenever this version changes, so make it a fingerprint of the content.
+import hashlib
+seed["version"] = "v-" + hashlib.sha256(json.dumps({k: v for k, v in seed.items() if k not in ("version", "generated")},
+                                                   sort_keys=True).encode()).hexdigest()[:16]
 (OUT / "seed.json").write_text(json.dumps(seed, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
 
 # ---------------------------------------------------------------- report
