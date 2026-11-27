@@ -25,6 +25,7 @@ python3 scripts/employee_donations.py
 python3 scripts/israel_money.py
 .venv/bin/python scripts/state_officials.py
 python3 scripts/state_finance.py --refresh
+python3 scripts/agenda.py
 python3 scripts/build_seed.py
 python3 scripts/money_network.py
 python3 scripts/vote_records.py

@@ -279,6 +279,262 @@ def new_york(people):
     return list(by_person.values())
 
 
+# ---------------------------------------------------------------- bulk downloads (Texas, California)
+BULK = RAW / "bulk"
+BULK_URLS = {"TEC_CF_CSV.zip": "https://prd.tecprd.ethicsefile.com/public/cf/public/TEC_CF_CSV.zip",
+             "dbwebexport.zip": "https://campaignfinance.cdn.sos.ca.gov/dbwebexport.zip"}
+
+
+def bulk(name):
+    f = BULK / name
+    if REFRESH or not f.exists():
+        BULK.mkdir(parents=True, exist_ok=True)
+        print("  downloading", name)
+        subprocess.run(["curl", "-sSL", "-m", "3600", "--retry", "3", "-o", str(f), BULK_URLS[name]], check=True)
+    return f
+
+
+def org_kind(name, default="business"):
+    u = (name or "").upper()
+    if PARTY_RX.search(u):
+        return "party"
+    if re.search(r"\bPAC\b|POLITICAL ACTION|COMMITTEE|\bFUND\b|ASSOCIATION|COALITION|COUNCIL", u):
+        return "pac"
+    return default
+
+
+def cached(name, build):
+    f = CACHE / f"{name}.json"
+    if f.exists() and not REFRESH:
+        return json.loads(f.read_text())
+    out = build()
+    f.write_text(json.dumps(out))
+    return out
+
+
+def as_cands(raw):
+    """Cached plain-dict candidates back into counters."""
+    out = []
+    for c in raw:
+        c = dict(c)
+        for k in ("kinds", "orgs", "emp"):
+            c[k] = collections.Counter(c[k])
+        out.append(c)
+    return out
+
+
+# ---------------------------------------------------------------- Texas
+def texas():
+    def build():
+        import csv, io, zipfile
+        csv.field_size_limit(10 ** 8)
+        z = zipfile.ZipFile(bulk("TEC_CF_CSV.zip"))
+        office = {"STATESEN": "state_upper", "STATEREP": "state_lower", "GOVERNOR": "governor"}
+        filers = {}
+        for r in csv.DictReader(io.TextIOWrapper(z.open("filers.csv"), encoding="latin-1", newline="")):
+            if r["filerTypeCd"] != "COH":
+                continue
+            # The office sought comes first: a state representative running for governor raises for that race.
+            for oc, od in ((r["ctaSeekOfficeCd"], r["ctaSeekOfficeDistrict"]), (r["contestSeekOfficeCd"], r["contestSeekOfficeDistrict"]),
+                           (r["filerHoldOfficeCd"], r["filerHoldOfficeDistrict"])):
+                if oc in office:
+                    filers[r["filerIdent"]] = {"chamber": office[oc], "district": od, "last": r["filerNameLast"],
+                                               "first": (r["filerNameFirst"] or "").split()[0] if r["filerNameFirst"] else "",
+                                               "full": f"{r['filerNameFirst']} {r['filerNameLast']}"}
+                    break
+        # Specific-purpose committees named for a candidate ("Texans for Greg Abbott") raise for that candidate.
+        by_name = collections.defaultdict(list)
+        for fid, f in filers.items():
+            by_name[slug(f["full"])].append(fid)
+        owner, own_names = {}, collections.defaultdict(set)
+        for r in csv.DictReader(io.TextIOWrapper(z.open("filers.csv"), encoding="latin-1", newline="")):
+            if r["filerTypeCd"] != "SPAC":
+                continue
+            nm = f" {slug(r['filerName'])} "
+            fits = {fid for full, ids in by_name.items() if full and f" {full} " in nm for fid in ids}
+            if len(fits) == 1:
+                owner[r["filerIdent"]] = fits.pop()
+        names = {}
+        for r in csv.DictReader(io.TextIOWrapper(z.open("filers.csv"), encoding="latin-1", newline="")):
+            names[r["filerIdent"]] = slug(r["filerName"])
+        for spac, fid in owner.items():
+            own_names[fid].add(names.get(spac, ""))
+        print("   TX candidate committees", len(owner))
+        cands = {}
+        for name in sorted(n for n in z.namelist() if re.match(r"contribs_\d+\.csv$", n)):
+            for r in csv.DictReader(io.TextIOWrapper(z.open(name), encoding="latin-1", newline="")):
+                fid = owner.get(r["filerIdent"], r["filerIdent"])
+                if fid not in filers or r["infoOnlyFlag"] == "Y" or r["contributionDt"] < "20250101":
+                    continue
+                if r["contributorPersentTypeCd"] == "ENTITY" and slug(r["contributorNameOrganization"]) in own_names[fid]:
+                    continue  # money moved between the candidate's own committees
+                f = filers[fid]
+                c = cands.setdefault(fid, {"total": 0.0, "n": 0, "kinds": collections.Counter(), "orgs": collections.Counter(),
+                                           "org_kind": {}, "emp": collections.Counter(), "cycle": "2025–26", "key": fid, **f})
+                amt = num(r["contributionAmount"])
+                c["total"] += amt; c["n"] += 1
+                if r["contributorPersentTypeCd"] == "ENTITY":
+                    nm = r["contributorNameOrganization"].strip()
+                    k = org_kind(nm)
+                    c["kinds"][k] += amt; c["orgs"][nm] += amt; c["org_kind"][nm] = k
+                else:
+                    self_ = slug(r["contributorNameLast"]) == slug(f["last"]) and slug(r["contributorNameFirst"]).startswith(slug(f["first"]) or "~")
+                    c["kinds"]["self" if self_ else "individual"] += amt
+                    emp = (r["contributorEmployer"] or "").strip().upper()
+                    if emp and "NURS" not in (r["contributorOccupation"] or "").upper():
+                        c["emp"][emp] += amt
+            print("   ", name, len(cands))
+        return list(cands.values())
+    out = as_cands(cached("TX_agg", build))
+    for c in out:
+        c["source_url"] = "https://www.ethics.texas.gov/search/cf/"
+    return out
+
+
+# ---------------------------------------------------------------- California
+def california():
+    def build():
+        import io, zipfile
+        z = zipfile.ZipFile(bulk("dbwebexport.zip"))
+
+        def rows(table):
+            f = io.TextIOWrapper(z.open(f"CalAccess/DATA/{table}.TSV"), encoding="latin-1")
+            h = f.readline().rstrip("\r\n").split("\t")
+            for line in f:
+                v = line.rstrip("\r\n").split("\t")
+                if len(v) == len(h):
+                    yield dict(zip(h, v))
+
+        def year(d):
+            d = d.split(" ")[0]
+            return d[-4:] if len(d) >= 4 else ""
+        office = {"ASM": "state_lower", "SEN": "state_upper", "GOV": "governor"}
+        latest, filing_cand = {}, {}
+        for r in rows("CVR_CAMPAIGN_DISCLOSURE_CD"):
+            if r["FORM_TYPE"] != "F460" or r["ENTITY_CD"] not in ("CTL", "CAO") or r["OFFICE_CD"] not in office:
+                continue
+            if year(r["THRU_DATE"]) not in ("2025", "2026"):
+                continue
+            fid, aid = r["FILING_ID"], int(r["AMEND_ID"] or 0)
+            if aid >= latest.get(fid, -1):
+                latest[fid] = aid
+                key = (r["OFFICE_CD"], r["DIST_NO"].lstrip("0"), slug(r["CAND_NAML"]), slug(r["CAND_NAMF"]).split(" ")[0] if r["CAND_NAMF"] else "")
+                filing_cand[fid] = (key, r["FILER_NAML"], r["CAND_NAML"], r["CAND_NAMF"])
+        print("   CA filings", len(latest))
+        cands = {}
+        for r in rows("RCPT_CD"):
+            fid = r["FILING_ID"]
+            if fid not in latest or int(r["AMEND_ID"] or 0) != latest[fid] or r["FORM_TYPE"] not in ("A", "C"):
+                continue
+            if r["MEMO_CODE"] == "X" or year(r["RCPT_DATE"]) not in ("2025", "2026"):
+                continue
+            key, cmte, last, first = filing_cand[fid]
+            k = "|".join(key)
+            c = cands.setdefault(k, {"total": 0.0, "n": 0, "kinds": collections.Counter(), "orgs": collections.Counter(), "org_kind": {},
+                                     "emp": collections.Counter(), "cycle": "2025–26", "key": k, "chamber": office[key[0]],
+                                     "district": key[1], "last": last, "first": (first or "").split(" ")[0], "full": f"{first} {last}",
+                                     "committee_names": []})
+            if cmte not in c["committee_names"]:
+                c["committee_names"].append(cmte)
+            amt = num(r["AMOUNT"])
+            c["total"] += amt; c["n"] += 1
+            if r["ENTITY_CD"] == "IND":
+                self_ = r["CTRIB_SELF"] == "X" or (slug(r["CTRIB_NAML"]) == slug(last) and slug(r["CTRIB_NAMF"]).startswith(slug(first).split(" ")[0] or "~"))
+                c["kinds"]["self" if self_ else "individual"] += amt
+                emp = (r["CTRIB_EMP"] or "").strip().upper()
+                if emp and "NURS" not in (r["CTRIB_OCC"] or "").upper():
+                    c["emp"][emp] += amt
+            else:
+                nm = " ".join(x for x in (r["CTRIB_NAMF"], r["CTRIB_NAML"]) if x).strip()
+                k2 = {"PTY": "party", "COM": org_kind(nm, "pac"), "SCC": "pac"}.get(r["ENTITY_CD"], org_kind(nm))
+                c["kinds"][k2] += amt; c["orgs"][nm] += amt; c["org_kind"][nm] = k2
+        print("   CA candidates", len(cands))
+        return list(cands.values())
+    out = as_cands(cached("CA_agg", build))
+    for c in out:
+        c["source_url"] = "https://cal-access.sos.ca.gov/Campaign/"
+    return out
+
+
+# ---------------------------------------------------------------- Illinois
+IL_FILES = ["Receipts.txt", "Committees.txt", "CmteCandidateLinks.txt", "Candidates.txt"]
+
+
+def illinois():
+    def build():
+        d = BULK / "il"
+        d.mkdir(parents=True, exist_ok=True)
+        for name in IL_FILES:
+            if REFRESH or not (d / name).exists():
+                print("  downloading", name)
+                subprocess.run(["curl", "-sSL", "-m", "3600", "--retry", "3", "-o", str(d / name),
+                                "https://www.elections.il.gov/CampaignDisclosureDataFiles/" + name], check=True)
+
+        def rows(name):
+            with open(d / name, encoding="utf-8-sig", errors="replace", newline="") as f:
+                h = f.readline().rstrip("\r\n").split("\t")
+                for line in f:
+                    v = line.rstrip("\r\n").split("\t")
+                    if len(v) >= len(h) - 2:
+                        yield dict(zip(h, v))
+        office = {"State Senator": "state_upper", "State Representative": "state_lower", "Governor": "governor"}
+        cand = {}
+        for r in rows("Candidates.txt"):
+            if r["Office"] in office:
+                first = re.sub(r'"[^"]*"', "", r["FirstName"]).split()
+                cand[r["ID"]] = {"chamber": office[r["Office"]], "district": r["District"] if r["Office"] != "Governor" else "",
+                                 "last": r["LastName"].replace('"', "").strip(), "first": first[0] if first else "",
+                                 "full": f"{r['FirstName']} {r['LastName']}".replace('"', "")}
+        ctype = {r["ID"]: (r["TypeOfCommittee"], r["Name"]) for r in rows("Committees.txt")}
+        cmte_cand = {}
+        for r in rows("CmteCandidateLinks.txt"):
+            if r["CandidateID"] in cand and ctype.get(r["CommitteeID"], ("",))[0] == "Candidate":
+                # A committee can link to several candidate records over the years: the newest wins.
+                if int(r["CandidateID"]) > int(cmte_cand.get(r["CommitteeID"], "0")):
+                    cmte_cand[r["CommitteeID"]] = r["CandidateID"]
+        # The same person often has several candidate records; one key per person and office.
+        key_of = {cid: "|".join((cand[c]["chamber"], cand[c]["district"], slug(cand[c]["last"]), slug(cand[c]["first"])))
+                  for cid, c in cmte_cand.items()}
+        own = collections.defaultdict(set)
+        for cid, k in key_of.items():
+            own[k].add(slug(ctype[cid][1]))
+        cands = {}
+        for r in rows("Receipts.txt"):
+            cid = r.get("CommitteeID")
+            if cid not in key_of or r.get("Archived") == "True" or (r.get("RcvDate") or "") < "2025-01-01":
+                continue
+            part = (r.get("D2Part") or "")[:1]
+            if part not in ("1", "2", "5"):  # contributions, transfers in, in-kind; not loans or refunds
+                continue
+            k = key_of[cid]
+            org = not (r.get("FirstName") or "").strip()
+            nm = " ".join(x for x in (r.get("FirstName", "").strip(), r.get("LastOnlyName", "").strip()) if x)
+            if org and slug(nm) in own[k]:
+                continue  # between the candidate's own committees
+            c = cands.setdefault(k, {"total": 0.0, "n": 0, "kinds": collections.Counter(), "orgs": collections.Counter(), "org_kind": {},
+                                     "emp": collections.Counter(), "cycle": "2025–26", "key": k, "committee_names": [],
+                                     **cand[cmte_cand[cid]]})
+            if ctype[cid][1] not in c["committee_names"]:
+                c["committee_names"].append(ctype[cid][1])
+            amt = num(r.get("Amount"))
+            c["total"] += amt; c["n"] += 1
+            if org:
+                kk = org_kind(nm, "pac" if part == "2" else "business")
+                c["kinds"][kk] += amt; c["orgs"][nm] += amt; c["org_kind"][nm] = kk
+            else:
+                self_ = slug(r.get("LastOnlyName")) == slug(c["last"]) and slug(r.get("FirstName")).startswith(slug(c["first"]) or "~")
+                c["kinds"]["self" if self_ else "individual"] += amt
+                emp = (r.get("Employer") or "").strip().upper()
+                if emp and "NURS" not in (r.get("Occupation") or "").upper():
+                    c["emp"][emp] += amt
+        print("   IL candidates", len(cands))
+        return list(cands.values())
+    out = as_cands(cached("IL_agg", build))
+    for c in out:
+        c["source_url"] = "https://www.elections.il.gov/CampaignDisclosure/"
+    return out
+
+
 # ---------------------------------------------------------------- matching and output
 def summarize(c, st, source):
     hz = collections.Counter(); hz_items = []
@@ -321,6 +577,9 @@ SOURCES = {
     "WA": {"name": "Washington Public Disclosure Commission", "url": "https://data.wa.gov/d/kv7h-kjye"},
     "NY": {"name": "New York State Board of Elections", "url": "https://data.ny.gov/d/4j2b-6a2j"},
     "HI": {"name": "Hawaii Campaign Spending Commission", "url": "https://hicscdata.hawaii.gov/d/jexd-xbcg"},
+    "TX": {"name": "Texas Ethics Commission", "url": "https://www.ethics.texas.gov/data-reports/campaign-finance/downloadable-database/"},
+    "IL": {"name": "Illinois State Board of Elections", "url": "https://www.elections.il.gov/CampaignDisclosureDataFiles/"},
+    "CA": {"name": "California Secretary of State (Cal-Access)", "url": "https://www.sos.ca.gov/campaign-lobbying/cal-access-resources/raw-data-campaign-finance-and-lobbying-activity"},
 }
 
 people = json.load(open(RAW / "state_officials.json", encoding="utf-8"))["people"]
@@ -333,7 +592,19 @@ def dist_norm(d):
     return re.sub(r"^0+", "", re.sub(r"[^0-9A-Z]", "", str(d or "").upper()))
 
 
-def match(st, cand):
+def match(st, cand, anywhere=False):
+    hit = match_seat(st, cand)
+    if hit or not anywhere:
+        return hit
+    # Officials whose latest campaign was for another seat (an Assembly member running for the Senate):
+    # full first and last name must agree, and only one official may fit.
+    first, last = slug(cand["first"]), slug(cand["last"])
+    hits = [p for p in by_state[st] if p["chamber"] != "governor" and first and last
+            and (slug(p["last"]) == last or slug(p["name"]).split()[-1:] == [last]) and (slug(p["first"]) == first or slug(p["name"]).split()[0] == first)]
+    return hits[0] if len(hits) == 1 else None
+
+
+def match_seat(st, cand):
     pool = [p for p in by_state[st] if p["chamber"] == cand["chamber"]]
     if cand["chamber"] != "governor" and cand.get("district"):
         pool = [p for p in pool if dist_norm(p["sdistrict"]) == dist_norm(cand.get("district"))]
@@ -346,12 +617,29 @@ def match(st, cand):
     return hits[0] if len(hits) == 1 else None
 
 
+BULK_STATES = ("TX", "CA", "IL", "FL")
 finance, stats = {}, {}
-for st, fn in (("WA", washington), ("HI", hawaii)):
+SKIP = {x for a in sys.argv if a.startswith("--skip=") for x in a[7:].upper().split(",")}  # e.g. --skip=IL while a download is pending
+for st, fn in [x for x in (("WA", washington), ("HI", hawaii), ("TX", texas), ("CA", california), ("IL", illinois)) if x[0] not in SKIP]:
     print("fetching", st)
     cands = fn()
     n = 0
-    for c in sorted(cands, key=lambda c: (c["cycle"], c["total"])):  # a later or bigger campaign wins
+    if st in BULK_STATES:
+        # One 2025-26 window, possibly several committees per official (re-election, officeholder account): add them up.
+        mine = collections.defaultdict(list)
+        for c in cands:
+            p = match(st, c, anywhere=True)
+            if p:
+                mine[p["id"]].append(c)
+        for pid, cs in mine.items():
+            m = cs[0] if len(cs) == 1 else {**cs[0], "total": sum(c["total"] for c in cs), "n": sum(c["n"] for c in cs),
+                                            "kinds": sum((c["kinds"] for c in cs), collections.Counter()),
+                                            "orgs": sum((c["orgs"] for c in cs), collections.Counter()),
+                                            "emp": sum((c["emp"] for c in cs), collections.Counter()),
+                                            "org_kind": {k: v for c in cs for k, v in c["org_kind"].items()},
+                                            "committee_names": [n for c in cs for n in c.get("committee_names", [])]}
+            finance[pid] = summarize(m, st, SOURCES[st])
+    for c in sorted(cands, key=lambda c: (c["cycle"], c["total"])) if st not in BULK_STATES else []:  # a later or bigger campaign wins
         p = match(st, c)
         if p:
             finance[p["id"]] = summarize(c, st, SOURCES[st]); n += 1
@@ -362,7 +650,7 @@ for c in new_york(people):
     finance[c["pid"]] = summarize(c, "NY", SOURCES["NY"])
 stats["NY"] = {"matched": sum(1 for v in finance.values() if v["st"] == "NY"), "officials": len(by_state["NY"])}
 
-(RAW / "state_finance.json").write_text(json.dumps({"generated": TODAY, "states": {k: {**SOURCES[k], **stats[k]} for k in SOURCES},
+(RAW / "state_finance.json").write_text(json.dumps({"generated": TODAY, "states": {k: {**SOURCES[k], **stats[k]} for k in SOURCES if k in stats},
                                                      "finance": finance}))
 print(json.dumps(stats))
 print("with health money", sum(1 for v in finance.values() if v["health_total"]),

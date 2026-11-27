@@ -5,6 +5,7 @@ import { xSection, bindX } from "./xposts.js";
 import { caucusBadges, aipacBadge, hoverCard, israelSection, matrixBox } from "./badges.js";
 import { renderChanges, profileHistory, recentStrip, bindChanges } from "./changes.js";
 import { renderStates, renderState, bindStates, stateName } from "./states.js";
+import { agendaHtml, bindAgenda, renderFocus, bindFocus } from "./focus.js";
 import { mapHtml, stateHtml, renderIssues, renderElections, issueMatrix, leanBox, LEAN, bindViews, zipBox, renderZip, bindZip, votesBox, renderVotes, voteScore, drawDistricts } from "./views.js";
 
 export const STANCE = {
@@ -298,7 +299,7 @@ function renderMain() {
 export const chromeOnly = () => chrome();
 export const chrome = () => `${S.admin ? `<div class="adminbar"><div class="wrap"><span>Signed in as admin — edit controls are visible on every profile.</span><span><a href="#/admin">Admin panel</a> · <a href="#" data-logout>Sign out</a></span></div></div>` : ""}
 	<div class="wrap"><header class="top"><a class="brand" href="#/">Who Stands <span>In The Way</span></a>
-	<nav><a class="btn ghost" href="#/">Dashboard</a><a class="btn ghost" href="#/zip">Find your rep</a><a class="btn ghost" href="#/votes">Key votes</a><a class="btn ghost" href="#/money">Money</a><a class="btn ghost" href="#/states">States</a><a class="btn ghost" href="#/issues">Issues</a><a class="btn ghost" href="#/changes">Changes</a><a class="btn ghost" href="#/elections">2026 results</a><a class="btn" href="#/admin">${S.admin ? "Admin panel" : "Admin"}</a></nav></header></div>`;
+	<nav><a class="btn ghost" href="#/">Dashboard</a><a class="btn ghost" href="#/zip">Find your rep</a><a class="btn ghost" href="#/votes">Key votes</a><a class="btn ghost" href="#/money">Money</a><a class="btn ghost" href="#/states">States</a><a class="btn ghost" href="#/focus/TX">Texas</a><a class="btn ghost" href="#/issues">Issues</a><a class="btn ghost" href="#/changes">Changes</a><a class="btn ghost" href="#/elections">2026 results</a><a class="btn" href="#/admin">${S.admin ? "Admin panel" : "Admin"}</a></nav></header></div>`;
 export const footer = () => `<footer><div class="wrap">Baseline: the Congress sworn in January 3, 2027, from <a href="${url(S.data.meta?.roster_source || "https://en.wikipedia.org/wiki/120th_United_States_Congress")}" target="_blank" rel="noopener">Wikipedia's 120th Congress roster</a> (checked against Wikidata); returning members' accounts from the <a href="https://github.com/unitedstates/congress-legislators" target="_blank" rel="noopener">congress-legislators</a> project; returning members' support = sponsors and cosponsors of the 119th Congress bill on <a href="https://www.congress.gov/bill/119th-congress/house-bill/3069" target="_blank" rel="noopener">congress.gov</a>; money from <a href="https://www.fec.gov/data/browse-data/?tab=bulk-data" target="_blank" rel="noopener">FEC bulk filings</a> (2025–26 cycle); lean starts from each member's voting record (<a href="https://voteview.com" target="_blank" rel="noopener">Voteview</a> DW-NOMINATE, 119th Congress) and can be overridden by hand; newcomers' stances researched from campaign statements in November 2026 and linked to their source. "Not on record" means not a cosponsor and nothing documented yet. Everything after the baseline is maintained by hand.</div></footer>`;
 
 // ------------------------------------------------------------------ state campaign money (state agencies' open data)
@@ -391,12 +392,15 @@ async function openProfile(id) {
 			<h3>Where they stand</h3>
 			${S.data.policies.map((pl) => {
 				const x = pos[pl.id], st = x?.stance || "unknown";
+				// Secondary policies with nothing on record get one quiet line instead of a box.
+				if (!pl.is_primary && st === "unknown" && !S.admin) return `<p class="note"><b>${h(pl.name)}:</b> nothing on record yet.</p>`;
 				return `<div class="stance-box" style="--stance:var(--s-${st})"><div class="lbl">${h(pl.name)}</div><div class="val">${h(STANCE[st])}</div>
-					<p>${h(x?.note || (st === "unknown" ? "Not a cosponsor, and nothing documented yet." : ""))} ${x?.source_url ? `<a href="${url(x.source_url)}" target="_blank" rel="noopener">Source ↗</a>` : ""}</p>
+					<p>${h(x?.note || (st === "unknown" ? (pl.is_primary ? "Not a cosponsor, and nothing documented yet." : "Nothing documented yet.") : ""))} ${x?.source_url ? `<a href="${url(x.source_url)}" target="_blank" rel="noopener">Source ↗</a>` : ""}</p>
 					${x?.updated_at ? `<p class="note">Updated ${h(fmtDate(x.updated_at))}</p>` : ""}
 					${S.admin ? adminProfileTools.stance(p, pl, x) : ""}</div>`;
 			}).join("")}
 			${p.notes ? `<p class="note">${h(p.notes)}</p>` : ""}
+			${agendaHtml(p, d.agenda)}
 			${leanBox(p)}
 			${alignmentBox(f)}
 			${state ? "" : matrixBox(f)}
@@ -468,6 +472,7 @@ function route() {
 		else if (page.startsWith("#/votes")) renderVotes();
 		else if (page.startsWith("#/changes")) renderChanges();
 		else if (page.startsWith("#/states")) renderStates();
+		else if (page.startsWith("#/focus")) renderFocus(page.split("/")[2] || "TX");
 		else if (page.startsWith("#/state/")) renderState(page.split("/")[2] || "");
 		else if (page.startsWith("#/money")) renderMoney(page.split("/").slice(2));
 		else if (page.startsWith("#/zip")) renderZip(decodeURIComponent(page.split("/")[2] || ""));
@@ -527,7 +532,7 @@ function bind() {
 	bindMoney();
 	bindX();
 	bindChanges();
-	bindStates();
+	bindStates(); bindAgenda(); bindFocus();
 }
 
 load().then(() => { bind(); route(); }).catch((e) => { $("#app").innerHTML = `<p class="loading">Couldn't load data: ${h(e.message)}</p>`; });

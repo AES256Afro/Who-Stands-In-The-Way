@@ -828,6 +828,20 @@ if _so.exists():
                             "bluesky": "", "mastodon": "", "caucus": "", **x})
         state_people += 1
     positions += so["positions"]
+# Agendas, statewide officials and Medicaid / Medicare expansion stances (scripts/agenda.py).
+_ag = RAW / "agenda_seed.json"
+agenda = []
+if _ag.exists():
+    ag = json.load(open(_ag, encoding="utf-8"))
+    base = {k: "" for k in politicians[0]}
+    have_ids = {p_["id"] for p_ in politicians}
+    for x in ag["people"]:
+        if x["id"] not in have_ids:
+            politicians.append({**base, "lean": "unknown", "ideology": None, "lean_note": "", "phone_label": "", "committees": "[]", "offices": "[]",
+                                "fec_ids": "", "govtrack_id": None, "opensecrets_id": "", "district": None, "sdistrict": "", **x})
+    have_ids = {p_["id"] for p_ in politicians}
+    positions += [x for x in ag["positions"] if x["politician_id"] in have_ids]
+    agenda = [x for x in ag["agenda"] if x["politician_id"] in have_ids]
 # State campaign money (scripts/state_finance.py): states with open contribution data.
 _sf = RAW / "state_finance.json"
 meta_state_money = {}
@@ -848,6 +862,14 @@ policies = [
                     "newcomers by what they said on the trail. A public option does not count as support.",
      "bill_house": "H.R.3069", "bill_senate": "S.1506",
      "url": "https://www.congress.gov/bill/119th-congress/house-bill/3069"},
+    {"id": "medicaid_exp", "name": "Medicaid expansion", "is_primary": 0, "sort": 1,
+     "description": "Expanding Medicaid to adults up to 138% of the poverty line under the Affordable Care Act (Texas and nine other states "
+                    "haven't), or protecting the expansion where it exists. Support = authoring or voting for expansion, or saying so in their own words.",
+     "bill_house": "", "bill_senate": "", "url": "https://www.kff.org/medicaid/status-of-state-medicaid-expansion-decisions/"},
+    {"id": "medicare_exp", "name": "Medicare expansion", "is_primary": 0, "sort": 2,
+     "description": "Widening Medicare short of single payer: dental, vision and hearing coverage, a lower eligibility age, or letting Medicare "
+                    "negotiate more drug prices. Support = cosponsoring such a bill or saying so in their own words.",
+     "bill_house": "", "bill_senate": "", "url": "https://www.congress.gov/"},
 ]
 outlets = [{"name": n, "kind": k, "website": w, "logo_url": "", "contact_url": "", "notes": ""} for n, k, w in [
     ("CNN", "TV / cable news", "https://www.cnn.com"), ("MSNBC", "TV / cable news", "https://www.msnbc.com"),
@@ -869,7 +891,7 @@ meta = {"congresses": [{"id": 120, "label": "120th Congress (from Jan 3, 2027)"}
         "roster_source": f"https://en.wikipedia.org/w/index.php?title=120th_United_States_Congress&oldid={ROSTER_REV}"}
 seed = {"version": f"120b-{TODAY}-{len(positions)}-{len(issues)}-{len(exit_polls['national'])}-{len(exit_polls['senate'])}",
         "terms": terms, "races": races, "key_votes": key_votes, "member_votes": member_votes, "issues": issues, "issue_polls": issue_polls, "meta": meta, "generated": TODAY, "politicians": politicians, "positions": positions, "policies": policies,
-        "outlets": outlets, "finance": finance}
+        "outlets": outlets, "finance": finance, "agenda": agenda}
 # Drop empty fields (the database reads a missing field as NULL); this keeps ~7,400 state records small.
 seed["politicians"] = [{k: v for k, v in p_.items() if v not in ("", None, "[]")} for p_ in seed["politicians"]]
 # The Worker reloads the baseline whenever this version changes, so make it a fingerprint of the content.

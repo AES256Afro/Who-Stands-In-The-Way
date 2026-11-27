@@ -48,6 +48,9 @@ const SCHEMA = [
 	`CREATE INDEX IF NOT EXISTS idx_changes_at ON changes (at)`,
 	`CREATE TABLE IF NOT EXISTS login_attempts (ip TEXT PRIMARY KEY, fails INTEGER, window_start INTEGER, locked_until INTEGER)`,
 	`CREATE TABLE IF NOT EXISTS x_cache (handle TEXT PRIMARY KEY, user_id TEXT, fetched_at INTEGER, data TEXT)`,
+	// Agenda: priorities, first-day/week/month/year plans, polling, unpopular positions and a dated timeline (JSON).
+	// source = 'seed' rows refresh with the research files; 'admin' rows (edited in the admin panel) are kept.
+	`CREATE TABLE IF NOT EXISTS agenda (politician_id TEXT PRIMARY KEY, data TEXT, source TEXT DEFAULT 'seed', updated_at TEXT)`,
 	`CREATE TABLE IF NOT EXISTS key_votes (
 		id TEXT PRIMARY KEY, chamber TEXT, rollnumber INTEGER, date TEXT, sort INTEGER, title TEXT, question TEXT,
 		yes_means TEXT, coverage_side TEXT, source_url TEXT, tally TEXT, hidden INTEGER DEFAULT 0)`,
@@ -129,11 +132,14 @@ async function init(db) {
 	const before = have ? new Map((await db.prepare("SELECT politician_id, stance FROM positions WHERE policy_id = 'm4a'").all()).results.map((r) => [r.politician_id, r.stance])) : null;
 	// Only people already on the site get "data update" log entries; newly added people would flood the log.
 	const existed = have ? new Set((await db.prepare("SELECT id FROM politicians").all()).results.map((r) => r.id)) : null;
-	const stmts = [];
+	const stmts = [], sizes = new Map();
 	const bulk = (sql, cols, rows, size) => {
 		const sel = cols.map((c) => `json_extract(value,'$.${c}')`).join(",");
 		for (let i = 0; i < rows.length; i += size) {
-			stmts.push(db.prepare(sql.replace("%COLS%", cols.join(",")).replace("%SEL%", sel)).bind(JSON.stringify(rows.slice(i, i + size))));
+			const arg = JSON.stringify(rows.slice(i, i + size));
+			const st = db.prepare(sql.replace("%COLS%", cols.join(",")).replace("%SEL%", sel)).bind(arg);
+			sizes.set(st, arg.length);
+			stmts.push(st);
 		}
 	};
 	const ids = seed.politicians.map((p) => p.id);
@@ -163,10 +169,20 @@ async function init(db) {
 	stmts.push(db.prepare("DELETE FROM member_votes"));
 	bulk("INSERT INTO member_votes (vote_id, politician_id, vote) SELECT json_extract(value,'$.vote_id'), json_extract(value,'$.politician_id'), json_extract(value,'$.vote') FROM json_each(?)",
 		[], seed.member_votes || [], 400);
+	bulk(`INSERT INTO agenda (politician_id, data, source, updated_at) SELECT json_extract(value,'$.politician_id'), json_extract(value,'$.data'), 'seed', json_extract(value,'$.updated_at')
+		FROM json_each(?) WHERE 1 ON CONFLICT (politician_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at WHERE agenda.source = 'seed'`,
+		[], (seed.agenda || []).map((a) => ({ ...a, data: JSON.stringify(a.data) })), 20);
 	stmts.push(db.prepare("DELETE FROM finance"));
 	bulk("INSERT INTO finance (%COLS%) SELECT %SEL% FROM json_each(?)", ["politician_id", "as_of", "data"], seed.finance.map((f) => ({ ...f, data: JSON.stringify(f.data) })), 60);
 	stmts.push(db.prepare("INSERT INTO meta (key, value) VALUES ('seed_version', ?), ('seed_meta', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").bind(seed.version, JSON.stringify(seed.meta || {})));
-	await db.batch(stmts);
+	// D1 caps one batch at 32 MiB, so send the load in parts, in order. The seed version is written by the
+	// last statement, so if a part fails the next request starts the load over.
+	for (let i = 0, part = [], bytes = 0; i < stmts.length; i++) {
+		const n = sizes.get(stmts[i]) || 200;
+		if (part.length && bytes + n > 12e6) { await db.batch(part); part = []; bytes = 0; }
+		part.push(stmts[i]); bytes += n;
+		if (i === stmts.length - 1) await db.batch(part);
+	}
 	if (before) {
 		// Log Medicare for All stance changes that came with this data update (new research, cosponsorships).
 		const after = (await db.prepare("SELECT politician_id, stance, note, source_url FROM positions WHERE policy_id = 'm4a'").all()).results;
@@ -267,7 +283,7 @@ async function bootstrap(db) {
 }
 
 async function profile(db, id) {
-	const [p, pos, apps, donors, fin, ipos, terms] = await db.batch([
+	const [p, pos, apps, donors, fin, ipos, terms, ag] = await db.batch([
 		db.prepare("SELECT * FROM politicians WHERE id = ?").bind(id),
 		db.prepare("SELECT * FROM positions WHERE politician_id = ?").bind(id),
 		db.prepare(`SELECT a.*, o.name AS outlet_name, o.logo_url AS outlet_logo, o.website AS outlet_website
@@ -276,11 +292,13 @@ async function profile(db, id) {
 		db.prepare("SELECT as_of, data FROM finance WHERE politician_id = ?").bind(id),
 		db.prepare("SELECT * FROM issue_positions WHERE politician_id = ?").bind(id),
 		db.prepare("SELECT * FROM terms WHERE politician_id = ? ORDER BY congress").bind(id),
+		db.prepare("SELECT data, source, updated_at FROM agenda WHERE politician_id = ?").bind(id),
 	]);
 	if (!p.results.length) return null;
-	const f = fin.results[0];
+	const f = fin.results[0], a = ag.results[0];
 	return { politician: p.results[0], positions: pos.results, appearances: apps.results, donors: donors.results,
 		issue_positions: ipos.results, terms: terms.results,
+		agenda: a ? { ...JSON.parse(a.data || "{}"), _source: a.source, _updated: a.updated_at } : null,
 		finance: f ? { as_of: f.as_of, ...JSON.parse(f.data) } : null };
 }
 
@@ -316,6 +334,19 @@ async function admin(req, env, parts) {
 			.bind(row.politician_id, row.issue_id, row.position, row.note ?? null, row.source_url ?? null, new Date().toISOString().slice(0, 10))];
 		if ((prev?.position || "unknown") !== row.position) stmts.push(change(db, { politician_id: row.politician_id, kind: "issue", field: row.issue_id, old: prev?.position || "unknown", new: row.position, note: row.note, source_url: row.source_url }));
 		await db.batch(stmts);
+		return json({ ok: true });
+	}
+	if (table === "agenda" && method === "PUT" && id) {
+		// The whole agenda as JSON (see data/raw/research/agenda/SCHEMA.md); every link must be http(s).
+		const data = body.data;
+		if (!data || typeof data !== "object" || Array.isArray(data)) return fail(400, "Send the agenda as a JSON object");
+		const urls = JSON.stringify(data).match(/"(?:source_url|url)":"([^"]*)"/g) || [];
+		if (urls.some((u) => { const v = u.split('":"')[1].slice(0, -1); return v && !/^https?:\/\//.test(v); })) return fail(400, "Links must start with http:// or https://");
+		const exists = await db.prepare("SELECT id FROM politicians WHERE id = ?").bind(id).first();
+		if (!exists) return fail(404, "No such person");
+		await db.batch([db.prepare(`INSERT INTO agenda (politician_id, data, source, updated_at) VALUES (?,?,'admin',?)
+			ON CONFLICT (politician_id) DO UPDATE SET data = excluded.data, source = 'admin', updated_at = excluded.updated_at`).bind(id, JSON.stringify(data), new Date().toISOString().slice(0, 10)),
+			change(db, { politician_id: id, kind: "evidence", field: "agenda", note: "Agenda edited" })]);
 		return json({ ok: true });
 	}
 	if (table === "lean" && method === "PUT" && id) {
@@ -572,6 +603,17 @@ export default {
 					FROM politicians p LEFT JOIN positions s ON s.politician_id = p.id AND s.policy_id = 'm4a' LEFT JOIN finance f ON f.politician_id = p.id
 					WHERE p.level = 'state' AND p.state = ? AND p.status != 'former' ORDER BY p.chamber, p.last`).bind(st).all();
 				return json(r.results);
+			}
+			if (parts[0] === "focus" && parts[1] && req.method === "GET") {
+				// A state's focus page: everyone from that state with an agenda, every official's stance on each policy, and state money.
+				const st = parts[1].toUpperCase().slice(0, 2);
+				const [ag, pos] = await env.DB.batch([
+					env.DB.prepare(`SELECT p.id, p.name, p.party, p.role, p.chamber, p.status, p.level, p.district, p.sdistrict, p.photo_url, a.data
+						FROM agenda a JOIN politicians p ON p.id = a.politician_id WHERE p.state = ? AND p.status != 'former'`).bind(st),
+					env.DB.prepare(`SELECT p.id, p.name, p.party, p.chamber, p.level, p.status, p.district, p.sdistrict, s.policy_id, s.stance, s.note, s.source_url
+						FROM positions s JOIN politicians p ON p.id = s.politician_id WHERE p.state = ? AND p.status != 'former' AND s.policy_id != 'm4a'`).bind(st),
+				]);
+				return json({ agenda: ag.results.map((r) => ({ ...r, data: JSON.parse(r.data || "{}") })), positions: pos.results });
 			}
 			if (parts[0] === "races" && req.method === "GET") {
 				const r = await env.DB.prepare("SELECT * FROM races ORDER BY chamber DESC, state, district").all();
