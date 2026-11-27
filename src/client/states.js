@@ -63,7 +63,7 @@ export async function renderState(st) {
 		const sup = all.filter((p) => p.stance === "supports").length;
 		return `<div class="section-title"><h2>${h(CHAMBER[chamber])}</h2><span>${all.length} members · ${sup} single-payer sponsor${sup === 1 ? "" : "s"}</span></div>
 			<div class="list">${rows.map((p) => `<button class="row" style="--stance:var(--s-${h(p.stance)})" data-id="${h(p.id)}">${avatar(p)}
-				<span><span class="name">${h(p.name)}</span><br><span class="meta"><span class="party ${h(p.party)}">${h(p.party)}</span> · District ${h(p.sdistrict || "?")}</span></span>
+				<span><span class="name">${h(p.name)}</span><br><span class="meta"><span class="party ${h(p.party)}">${h(p.party)}</span> · District ${h(p.sdistrict || "?")}${p.status === "incoming" ? ` · <span class="tag new">New in 2027</span>` : p.status === "departing" ? " · leaving in January" : ""}</span></span>
 				<span class="right">${pill(p.stance)}${p.raised != null ? `<span title="Raised in their latest campaign; health-industry share">${short(p.raised)} raised${p.health ? ` · <b>${short(p.health)}</b> health` : ""}</span>` : p.phone ? `<span>${h(p.phone)}</span>` : ""}</span></button>`).join("") || `<p class="empty">Nobody matches.</p>`}</div>`;
 	};
 	const opt = (v, l, cur) => `<option value="${h(v)}"${cur === v ? " selected" : ""}>${h(l)}</option>`;

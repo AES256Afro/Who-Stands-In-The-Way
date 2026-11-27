@@ -841,6 +841,11 @@ if _ag.exists():
                                 "fec_ids": "", "govtrack_id": None, "opensecrets_id": "", "district": None, "sdistrict": "", **x})
     have_ids = {p_["id"] for p_ in politicians}
     positions += [x for x in ag["positions"] if x["politician_id"] in have_ids]
+    gone = {d["id"]: d["note"] for d in ag.get("departing", [])}
+    for p_ in politicians:
+        if p_["id"] in gone and p_.get("status") == "current":
+            p_["status"] = "departing"
+            p_["notes"] = gone[p_["id"]]
     agenda = [x for x in ag["agenda"] if x["politician_id"] in have_ids]
 # State campaign money (scripts/state_finance.py): states with open contribution data.
 _sf = RAW / "state_finance.json"

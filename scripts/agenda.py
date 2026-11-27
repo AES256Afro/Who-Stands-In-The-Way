@@ -72,7 +72,34 @@ def clean(d):
     return d
 
 
-new_people, agenda, positions = [], [], []
+new_people, agenda, positions, departing = [], [], [], []
+
+# ---------------------------------------------------------------- Texas Legislature newcomers (elected Nov 2026, seated Jan 2027)
+def leg_id(r):
+    return f"TXL-{'S' if r['chamber'] == 'upper' else 'H'}{r['district']}-" + "-".join(slug(r["name"]).split())
+
+
+LEG = DIR / "tx-leg-newcomers.json"
+if LEG.exists():
+    for r in json.load(open(LEG, encoding="utf-8")):
+        if not r.get("name") or r.get("how") == "uncalled" or r.get("chamber") not in ("upper", "lower") or not URL.match(r.get("source_url") or ""):
+            continue
+        chamber = "state_" + r["chamber"]
+        pid = leg_id(r)
+        nm = r["name"].split()
+        p = {"id": pid, "name": r["name"], "first": nm[0], "last": nm[-1], "chamber": chamber,
+             "role": ("State Senator" if chamber == "state_upper" else "State Representative") + "-elect", "state": "TX",
+             "sdistrict": str(r["district"]), "party": (r.get("party") or "")[:1], "voting": 1, "status": "incoming", "level": "state",
+             "notes": f"Won the November 2026 election ({r.get('how', 'new to the seat')}); takes office January 2027."
+                      + (f" Replaces {r['replaces']}." if r.get("replaces") else ""),
+             "website": r.get("campaign_site") or "", "twitter": (r.get("x") or "").lstrip("@")}
+        people[pid] = p
+        new_people.append(p)
+        # Whoever holds the seat now is leaving it (they may still appear elsewhere, e.g. a House member moving up).
+        for q in list(people.values()):
+            if q.get("state") == "TX" and q.get("chamber") == chamber and str(q.get("sdistrict")) == str(r["district"]) \
+                    and q.get("status") == "current" and q["id"].startswith("OS-"):
+                departing.append({"id": q["id"], "note": f"Leaving this seat in January 2027; {r['name']} won the November 2026 election."})
 ALIAS = {"TX-gov-hinojosa": "GOV-TX-gina-hinojosa"}  # ids the research used for people already on the site
 done = set()
 ROLE = {"railroad": "Railroad Commissioner", "lieutenant": "Lieutenant Governor", "attorney": "Attorney General", "comptroller": "Comptroller",
@@ -110,7 +137,8 @@ for f in sorted(glob.glob(str(DIR / "*.json")), key=lambda f: (pathlib.Path(f).n
         for key, pol in (("medicaid_expansion", "medicaid_exp"), ("medicare_expansion", "medicare_exp")):
             x = (a.get("health") or {}).get(key) or {}
             if x.get("stance") in ("supports", "opposes", "unclear") and URL.match(x.get("source_url") or ""):
-                stance = "unclear" if x["stance"] == "supports" and WEAK.match(x["source_url"]) else x["stance"]
+                # Thin evidence never picks a side: weak sources and low-confidence findings show as unclear.
+                stance = "unclear" if WEAK.match(x["source_url"]) or x.get("confidence") == "low" else x["stance"]
                 positions.append({"politician_id": pid, "policy_id": pol, "stance": stance, "note": "Researched Nov 2026: " + (x.get("note") or ""),
                                   "source_url": x["source_url"], "updated_at": TODAY})
 
@@ -257,7 +285,8 @@ for key, (bill, title, link) in MEDICARE_BILLS.items():
 if missing:
     print("Medicare-bill names not matched:", missing)
 
-(RAW / "agenda_seed.json").write_text(json.dumps({"generated": TODAY, "people": new_people, "agenda": agenda, "positions": positions}))
+(RAW / "agenda_seed.json").write_text(json.dumps({"generated": TODAY, "people": new_people, "agenda": agenda, "positions": positions, "departing": departing}))
+print("legislature newcomers", sum(1 for p in new_people if p["id"].startswith("TXL-")), "seats changing hands", len(departing))
 print("agendas", len(agenda), "new people", [p["name"] + " (" + p["role"] + ")" for p in new_people])
 print("positions", collections.Counter((p["policy_id"], p["stance"]) for p in positions))
 if unmatched:

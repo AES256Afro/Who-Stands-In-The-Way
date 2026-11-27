@@ -100,7 +100,7 @@ export async function renderFocus(st) {
 					.map((r) => `<button class="chip" style="--stance:var(--s-${h(r.stance)})" data-id="${h(r.id)}" title="${h(r.note || "")}"><i class="dot c-${h(r.stance)}"></i>${h(r.name)} <span class="party ${h(r.party)}">${h(r.party)}</span></button>`).join("")}</div>`;
 		};
 		return `<div class="section-title"><h2>${h(POLICY_LABEL[pol])}</h2><span>Who's on record, and how</span></div>
-			${block("Texas Legislature", by("state"))}${block("Texans in Congress and statewide", by("federal"))}`;
+			${block(`${stateName(st)} state officials (Legislature and statewide)`, by("state"))}${block(`${stateName(st)} in Congress`, by("federal"))}`;
 	}).join("");
 	const opts = people.filter((p) => (p.data.timeline || []).length);
 	const draw = () => {
