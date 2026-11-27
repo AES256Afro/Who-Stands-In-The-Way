@@ -252,3 +252,21 @@ table.races .n { white-space: nowrap; }
 .cmtes { display: flex; flex-wrap: wrap; gap: 5px; }
 .tag.healthc { border-color: var(--s-opposes); color: var(--ink); font-weight: 600; background: color-mix(in srgb, var(--s-opposes) 12%, transparent); }
 @media (max-width: 560px) { .dhead { flex-wrap: wrap; } .dhead .dact { width: 100%; } .dhead .dact .call { flex: 1; justify-content: center; } }
+
+/* find your rep */
+.zippage { margin: 18px 0 14px; }
+.zipform label { display: grid; gap: 2px; margin-bottom: 8px; }
+.zipform label b { font: 700 20px/1.2 var(--serif); }
+.zipform label span { color: var(--ink-2); font-size: 14px; }
+.zipform.compact label b { font-size: 18px; }
+.ziprow { display: flex; gap: 8px; flex-wrap: wrap; }
+.ziprow input { flex: 0 1 180px; font-size: 18px; letter-spacing: .08em; padding: 9px 12px; }
+.zipgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 10px; margin-bottom: 8px; }
+.zipcard { border-left: 5px solid var(--stance, var(--line)); display: grid; gap: 10px; align-content: start; }
+.zipcard .zhead { display: flex; gap: 12px; align-items: center; }
+.zipcard .zhead .avatar { width: 56px; height: 56px; }
+.zipcard .name { font: 700 18px/1.2 var(--serif); text-decoration: none; }
+.zipcard .meta { color: var(--ink-3); font-size: 13px; }
+.zipcard .btn.call { font-size: 15px; }
+details.script summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+details.script .sc { background: var(--surface-2); border-radius: 8px; padding: 10px 12px; font-size: 14.5px; line-height: 1.55; margin: 8px 0; }

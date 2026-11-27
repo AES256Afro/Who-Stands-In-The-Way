@@ -7,6 +7,7 @@ what they've said on the record, and who funds them. One Cloudflare Worker + D1 
 - **Map**: every state's senators and House seats, colored by party, Medicare for All stance or lean; tap a state for its members.
 - **Issues** (`/#/issues`): the ~30 issues Americans rank highest, with linked polling; each profile has a position matrix on them.
 - **2026 results** (`/#/elections`): every House and Senate race, plus exit-poll findings for Senate races.
+- **Find your rep** (`/#/zip/<ZIP>`): senators and House member(s) for a ZIP, with stance, call button and a call script. The lookup (`public/zip/*.json`) is built by `scripts/zip_lookup.py` (run with `.venv/bin/python`, needs shapely and pyshp) from Census ZIP areas and TIGER 2026 "cd120" district shapes, so it uses the January 2027 district lines.
 - **Congress selector**: the 120th (from Jan 3, 2027, the default) or the current 119th.
 - **Admin** (`/#/admin`): password sign-in. Log appearances, add outlets, set stances, add policies, add people, document donors.
 

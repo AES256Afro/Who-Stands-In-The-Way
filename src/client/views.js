@@ -243,3 +243,100 @@ export function bindViews() {
 		if (e.target.id === "elecstate") location.hash = "#/elections" + (e.target.value ? "/" + e.target.value : "");
 	});
 }
+
+// ------------------------------------------------------------------ find your members by ZIP
+const zipCache = {};
+async function zipData(zip) {
+	const k = zip[0];
+	if (!zipCache[k]) {
+		const r = await fetch(`/zip/${k}.json`);
+		zipCache[k] = r.ok ? await r.json() : {};
+	}
+	return zipCache[k][zip] || null;
+}
+// Always the Congress sworn in Jan 3, 2027: the ZIP table is built from its district lines.
+function next120() {
+	const d = S.data, cg = d.meta?.default_congress || 120;
+	const has = new Set((d.terms || []).filter((t) => t.congress === cg).map((t) => t.politician_id));
+	const any = new Set((d.terms || []).map((t) => t.politician_id));
+	return d.all.filter((p) => p.status !== "departing" && (has.has(p.id) || !any.has(p.id)));
+}
+
+export function zipBox(compact) {
+	return `<form class="zipform${compact ? " compact" : ""}" data-zipform>
+		<label for="zipq"><b>Who represents you?</b> <span>Enter your ZIP code to see your senators and House member, where they stand, and how to call them.</span></label>
+		<div class="ziprow"><input id="zipq" name="zip" type="text" inputmode="numeric" autocomplete="postal-code" pattern="[0-9]{5}" maxlength="5" placeholder="ZIP code" value="${h(S.zip || "")}" required>
+		<button class="btn primary">Find my members</button></div>
+	</form>`;
+}
+
+const ASK = "support the Medicare for All Act (H.R.3069 / S.1506) and cosponsor it when it is reintroduced in the new Congress";
+function script(p, zip) {
+	const st = stanceOf(p.id), title = p.chamber === "senate" ? "Senator" : "Representative";
+	const who = `${title} ${p.last || p.name}`;
+	const open = `Hi, my name is [your name] and I'm a constituent from ZIP code ${zip}. I'm calling about Medicare for All.`;
+	const body = {
+		supports: `I want to thank ${who} for supporting Medicare for All. Please keep fighting for it, and cosponsor the bill again as soon as it's reintroduced.`,
+		public_option: `I know ${who} has backed a public option. A public option isn't enough. I'm asking ${who} to ${ASK}.`,
+		unclear: `I haven't been able to find a clear answer on where ${who} stands. I'm asking ${who} to ${ASK}. Can you tell me their position?`,
+		opposes: `I'm disappointed that ${who} has opposed Medicare for All. Everyone deserves health care without bills or networks. I'm asking ${who} to ${ASK}.`,
+		unknown: `I couldn't find ${who}'s position on Medicare for All. I'm asking ${who} to ${ASK}. Can you tell me where they stand?`,
+	}[st] || "";
+	return `${open} ${body} Thank you.`;
+}
+
+function memberCard(p, zip, share) {
+	const st = stanceOf(p.id);
+	const sc = script(p, zip);
+	return `<article class="card zipcard" style="--stance:var(--s-${st})">
+		<div class="zhead">${avatar(p)}<div><a class="name" href="#/p/${h(p.id)}">${h(p.name)}</a>
+			<div class="meta"><span class="party ${h(p.party)}">${h(PARTY[p.party] || p.party)}</span> · ${p.chamber === "senate" ? `Senator, ${h(STATE_NAMES[p.state] || p.state)}` : `${h(seat(p))}${share && share < 100 ? ` · covers ${share}% of this ZIP` : ""}`}${p.status === "incoming" ? ` · <span class="tag new">New</span>` : ""}</div></div></div>
+		<div class="zstance">${pill(st)}</div>
+		<div class="links">${p.phone ? `<a class="btn primary call" href="tel:+1${h(String(p.phone).replace(/\D/g, ""))}">📞 Call ${h(p.phone)}</a>` : ""}<a class="btn small" href="#/p/${h(p.id)}">Full profile</a></div>
+		${p.phone_label ? `<p class="note">${h(p.phone_label)}</p>` : ""}
+		<details class="script"><summary>What to say</summary><p class="sc">${h(sc)}</p><button type="button" class="btn small" data-copy="${h(sc)}">Copy script</button></details>
+	</article>`;
+}
+
+export async function renderZip(zip) {
+	S.zip = zip || "";
+	let body = "";
+	if (zip) {
+		if (!/^\d{5}$/.test(zip)) body = `<p class="empty">Enter a 5-digit ZIP code.</p>`;
+		else {
+			const hit = await zipData(zip);
+			if (!hit) {
+				body = `<p class="empty">We couldn't place ZIP ${h(zip)}. PO-box-only and some business ZIPs aren't mapped to an area. Try the ZIP where you live, or <a href="#/">browse the map</a> to pick your state.</p>`;
+			} else {
+				const pool = next120();
+				const state = hit[0][0];
+				const sens = pool.filter((p) => p.chamber === "senate" && p.state === state);
+				const reps = hit.map(([st, d, share]) => ({ p: pool.find((p) => p.chamber === "house" && p.state === st && (p.district || 0) === d), st, d, share }));
+				const split = hit.length > 1;
+				body = `<div class="section-title"><h2>Your members of Congress</h2><span>ZIP ${h(zip)} · ${h(STATE_NAMES[state] || state)} · the Congress sworn in Jan 3, 2027</span></div>
+					${split ? `<p class="lede">Your ZIP code crosses ${hit.length} House districts, so we show each one. To be sure which is yours, check your street address with your state's election office or the <a href="https://www.house.gov/representatives/find-your-representative" target="_blank" rel="noopener">House's lookup ↗</a>; note that it shows the current districts until January 3.</p>` : ""}
+					${sens.length ? `<h3 class="mini">Senators</h3><div class="zipgrid">${sens.map((p) => memberCard(p, zip)).join("")}</div>` : `<p class="note">${h(STATE_NAMES[state] || state)} has no senators.</p>`}
+					<h3 class="mini">House</h3><div class="zipgrid">${reps.map((r) => r.p ? memberCard(r.p, zip, r.share) : `<article class="card zipcard"><b>${h(r.st)}-${r.d || "AL"}</b><p class="note">This seat is still undecided${split ? ` (covers ${r.share}% of this ZIP)` : ""}.</p></article>`).join("")}</div>
+					<p class="note">Districts are matched by the share of the ZIP code's area inside each one (Census ZIP areas and 2027 district lines). New members' direct lines are assigned after January 3; until then their call button goes to the Capitol switchboard.</p>`;
+			}
+		}
+	}
+	$("#app").innerHTML = `${chrome()}<main class="wrap"><section class="card zippage">${zipBox()}</section><div id="zipresult">${body}</div></main>${footer()}`;
+	if (!zip) $("#zipq")?.focus();
+}
+
+export function bindZip() {
+	document.addEventListener("submit", (e) => {
+		const f = e.target.closest("[data-zipform]");
+		if (!f) return;
+		e.preventDefault();
+		const z = (f.zip.value || "").replace(/\D/g, "").slice(0, 5);
+		location.hash = "#/zip/" + z;
+	});
+	document.addEventListener("click", async (e) => {
+		const b = e.target.closest("[data-copy]");
+		if (!b) return;
+		try { await navigator.clipboard.writeText(b.dataset.copy); toast("Script copied"); }
+		catch { toast("Couldn't copy. Select the text and copy it instead.", true); }
+	});
+}

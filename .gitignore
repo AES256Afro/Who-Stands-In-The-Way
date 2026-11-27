@@ -6,3 +6,4 @@ dist
 .secrets*
 data/raw
 .DS_Store
+.venv

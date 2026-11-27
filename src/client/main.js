@@ -1,5 +1,5 @@
 import { renderAdmin, adminProfileTools, bindAdmin } from "./admin.js";
-import { mapHtml, stateHtml, renderIssues, renderElections, issueMatrix, leanBox, LEAN, bindViews } from "./views.js";
+import { mapHtml, stateHtml, renderIssues, renderElections, issueMatrix, leanBox, LEAN, bindViews, zipBox, renderZip, bindZip } from "./views.js";
 
 export const STANCE = {
 	supports: "Supports",
@@ -255,6 +255,7 @@ function renderMain() {
 				${legend()}
 			</div>
 		</section>
+		<section class="card zippage">${zipBox(true)}</section>
 		<section class="card mapcard" id="map">${mapHtml()}</section>
 		<div id="statepanel">${stateHtml()}</div>
 		<section class="chambers">
@@ -285,7 +286,7 @@ function renderMain() {
 export const chromeOnly = () => chrome();
 export const chrome = () => `${S.admin ? `<div class="adminbar"><div class="wrap"><span>Signed in as admin — edit controls are visible on every profile.</span><span><a href="#/admin">Admin panel</a> · <a href="#" data-logout>Sign out</a></span></div></div>` : ""}
 	<div class="wrap"><header class="top"><a class="brand" href="#/">Who Stands <span>In The Way</span></a>
-	<nav><a class="btn ghost" href="#/">Dashboard</a><a class="btn ghost" href="#/issues">Issues</a><a class="btn ghost" href="#/elections">2026 results</a><a class="btn" href="#/admin">${S.admin ? "Admin panel" : "Admin"}</a></nav></header></div>`;
+	<nav><a class="btn ghost" href="#/">Dashboard</a><a class="btn ghost" href="#/zip">Find your rep</a><a class="btn ghost" href="#/issues">Issues</a><a class="btn ghost" href="#/elections">2026 results</a><a class="btn" href="#/admin">${S.admin ? "Admin panel" : "Admin"}</a></nav></header></div>`;
 export const footer = () => `<footer><div class="wrap">Baseline: the Congress sworn in January 3, 2027, from <a href="${url(S.data.meta?.roster_source || "https://en.wikipedia.org/wiki/120th_United_States_Congress")}" target="_blank" rel="noopener">Wikipedia's 120th Congress roster</a> (checked against Wikidata); returning members' accounts from the <a href="https://github.com/unitedstates/congress-legislators" target="_blank" rel="noopener">congress-legislators</a> project; returning members' support = sponsors and cosponsors of the 119th Congress bill on <a href="https://www.congress.gov/bill/119th-congress/house-bill/3069" target="_blank" rel="noopener">congress.gov</a>; money from <a href="https://www.fec.gov/data/browse-data/?tab=bulk-data" target="_blank" rel="noopener">FEC bulk filings</a> (2025–26 cycle); lean starts from each member's voting record (<a href="https://voteview.com" target="_blank" rel="noopener">Voteview</a> DW-NOMINATE, 119th Congress) and can be overridden by hand; newcomers' stances researched from campaign statements in November 2026 and linked to their source. "Not on record" means not a cosponsor and nothing documented yet. Everything after the baseline is maintained by hand.</div></footer>`;
 
 // ------------------------------------------------------------------ profile drawer
@@ -409,6 +410,7 @@ function route() {
 		if (page.startsWith("#/admin")) renderAdmin();
 		else if (page.startsWith("#/issues")) renderIssues();
 		else if (page.startsWith("#/elections")) renderElections(page.split("/")[2] || "");
+		else if (page.startsWith("#/zip")) renderZip(decodeURIComponent(page.split("/")[2] || ""));
 		else renderMain();
 		route.view = page;
 	}
@@ -460,6 +462,7 @@ function bind() {
 	window.addEventListener("hashchange", route);
 	bindAdmin();
 	bindViews();
+	bindZip();
 }
 
 load().then(() => { bind(); route(); }).catch((e) => { $("#app").innerHTML = `<p class="loading">Couldn't load data: ${h(e.message)}</p>`; });
