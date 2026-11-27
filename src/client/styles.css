@@ -299,3 +299,8 @@ table.matrix2 td.hcell { background: color-mix(in srgb, var(--c) calc(var(--a) *
 .vchip.no { background: color-mix(in srgb, var(--s-opposes) 25%, var(--surface-2)); }
 .vchip.nv, .vchip.pres { color: var(--ink-3); }
 @media (max-width: 760px) { .chartbox svg.sankey { min-width: 720px; } }
+
+/* X posts */
+.xposts { display: grid; gap: 6px; }
+.xposts .twitter-tweet { margin: 6px 0 !important; }
+h4.mini { font: 600 12.5px var(--sans); color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; margin: 12px 0 2px; }

@@ -1,6 +1,7 @@
 import { renderAdmin, adminProfileTools, bindAdmin } from "./admin.js";
 import { shareButtons, bindShare } from "./share.js";
 import { renderMoney, alignmentBox, moneyWeb, votingRecord, bindMoney } from "./money.js";
+import { xSection, bindX } from "./xposts.js";
 import { mapHtml, stateHtml, renderIssues, renderElections, issueMatrix, leanBox, LEAN, bindViews, zipBox, renderZip, bindZip, votesBox, renderVotes, voteScore } from "./views.js";
 
 export const STANCE = {
@@ -366,6 +367,7 @@ async function openProfile(id) {
 			<h3>On the record <small>${d.appearances.length} documented: shows, quotes, votes, posts</small></h3>
 			<div class="feed">${d.appearances.map((a) => appHtml(a, false)).join("") || `<p class="note">No appearances documented yet.</p>`}</div>
 			${S.admin ? adminProfileTools.appearance(p) : ""}
+			${xSection(p, d.appearances)}
 			<h3>Call or write them</h3>
 			<div class="contact">
 				<div><b>${p.phone_label ? "Phone" : "Washington office"}</b>${p.phone ? `<a href="${tel(p.phone)}">${h(p.phone)}</a>` : "—"}${p.phone_label ? `<span class="note">${h(p.phone_label)}</span>` : p.office ? `<span class="note">${h(p.office)}</span>` : ""}</div>
@@ -478,6 +480,7 @@ function bind() {
 	bindZip();
 	bindShare();
 	bindMoney();
+	bindX();
 }
 
 load().then(() => { bind(); route(); }).catch((e) => { $("#app").innerHTML = `<p class="loading">Couldn't load data: ${h(e.message)}</p>`; });

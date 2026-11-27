@@ -38,6 +38,20 @@ npx cf deploy --secrets-file .secrets.env
 
 `cf deploy` creates the D1 database on first deploy. The site seeds itself from `seed/seed.json` the first time it's opened.
 
+## Live X posts (optional)
+
+Profiles always embed X posts you log as entries (paste the post's link), using X's free single-post embed.
+For each member's latest posts, add an X API bearer token (paid X developer access) to `.secrets.env`:
+
+```
+X_BEARER_TOKEN=...
+```
+
+then redeploy with `npx cf deploy --secrets-file .secrets.env`. The Worker only asks X for the newest post IDs
+(5 per member, cached 6 hours in D1) and the browser renders them with the free embed. Don't declare it in
+`cloudflare.config.ts`: declared secrets are required, so deploys would fail while it's missing. Nothing from
+X loads until a visitor clicks "Show X posts".
+
 ## Refresh the baseline data
 
 Raw downloads live in `data/raw/` (not committed). `scripts/fetch_roster_120.py` downloads the incoming roster

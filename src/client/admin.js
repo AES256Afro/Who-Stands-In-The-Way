@@ -26,7 +26,7 @@ function appearanceFields(p) {
 			${field("Logo image link", "new_outlet_logo", "", "url", 'placeholder="https://"')}
 		</div>
 		${field("Headline", "title", "", "text", 'placeholder="Asked about Medicare for All on…"')}
-		<div class="grid">${field("Link to the clip, quote, vote or post", "clip_url", "", "url", 'placeholder="https://"')}
+		<div class="grid">${field("Link to the clip, quote, vote or post (X post links show embedded on the profile)", "clip_url", "", "url", 'placeholder="https://"')}
 			${field("Link to your own post about it", "post_url", "", "url", 'placeholder="https://"')}</div>
 		${area("What they said", "quote", "", "Quote or close paraphrase")}
 		${area("Your notes", "notes")}`;

@@ -40,6 +40,7 @@ const SCHEMA = [
 		sector TEXT, amount REAL, cycle TEXT, source_url TEXT, notes TEXT)`,
 	`CREATE TABLE IF NOT EXISTS finance (politician_id TEXT PRIMARY KEY, as_of TEXT, data TEXT)`,
 	`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`,
+	`CREATE TABLE IF NOT EXISTS x_cache (handle TEXT PRIMARY KEY, user_id TEXT, fetched_at INTEGER, data TEXT)`,
 	`CREATE TABLE IF NOT EXISTS key_votes (
 		id TEXT PRIMARY KEY, chamber TEXT, rollnumber INTEGER, date TEXT, sort INTEGER, title TEXT, question TEXT,
 		yes_means TEXT, coverage_side TEXT, source_url TEXT, tally TEXT, hidden INTEGER DEFAULT 0)`,
@@ -327,6 +328,41 @@ async function admin(req, env, parts) {
 	return fail(405, "Method not allowed");
 }
 
+// ---------------------------------------------------------------- recent X posts (optional, needs X_BEARER_TOKEN)
+// Only post IDs come from the X API; the browser shows them with X's free single-post embed.
+// Results are cached per handle for 6 hours to keep API reads low.
+const X_TTL = 6 * 60 * 60 * 1000;
+async function xPosts(env, pid) {
+	if (!env.X_BEARER_TOKEN) return { configured: false };
+	const p = await env.DB.prepare("SELECT twitter FROM politicians WHERE id = ?").bind(pid).first();
+	const handle = (p?.twitter || "").replace(/^@/, "").trim();
+	if (!/^[A-Za-z0-9_]{1,15}$/.test(handle)) return { configured: true, handle: null, posts: [] };
+	const key = handle.toLowerCase();
+	const cached = await env.DB.prepare("SELECT user_id, fetched_at, data FROM x_cache WHERE handle = ?").bind(key).first();
+	if (cached && Date.now() - cached.fetched_at < X_TTL) return { configured: true, handle, posts: JSON.parse(cached.data || "[]"), cached: true };
+	const auth = { headers: { authorization: `Bearer ${env.X_BEARER_TOKEN}` } };
+	try {
+		let uid = cached?.user_id;
+		if (!uid) {
+			const u = await fetch(`https://api.x.com/2/users/by/username/${handle}`, auth);
+			if (!u.ok) throw new Error(`X API ${u.status}`);
+			uid = (await u.json())?.data?.id;
+			if (!uid) throw new Error("X account not found");
+		}
+		const r = await fetch(`https://api.x.com/2/users/${uid}/tweets?max_results=5&exclude=replies,retweets&tweet.fields=created_at`, auth);
+		if (!r.ok) throw new Error(`X API ${r.status}`);
+		const posts = ((await r.json())?.data || []).map((t) => ({ id: t.id, created_at: t.created_at }));
+		await env.DB.prepare(`INSERT INTO x_cache (handle, user_id, fetched_at, data) VALUES (?,?,?,?)
+			ON CONFLICT (handle) DO UPDATE SET user_id = excluded.user_id, fetched_at = excluded.fetched_at, data = excluded.data`)
+			.bind(key, uid, Date.now(), JSON.stringify(posts)).run();
+		return { configured: true, handle, posts };
+	} catch (e) {
+		console.error("x posts", handle, String(e));
+		// Serve stale posts rather than nothing if the API is rate-limited or down.
+		return { configured: true, handle, posts: cached ? JSON.parse(cached.data || "[]") : [], error: "X didn't respond; showing saved posts if any." };
+	}
+}
+
 // ---------------------------------------------------------------- share links: /m/<id>
 // Link previews (X, Facebook, iMessage...) read these tags; people are sent on to the profile.
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -382,6 +418,7 @@ export default {
 			const parts = url.pathname.slice(5).split("/").filter(Boolean).map(decodeURIComponent);
 
 			if (parts[0] === "bootstrap" && req.method === "GET") return json(await bootstrap(env.DB));
+			if (parts[0] === "x" && parts[1] && req.method === "GET") return json(await xPosts(env, parts[1]));
 			if (parts[0] === "races" && req.method === "GET") {
 				const r = await env.DB.prepare("SELECT * FROM races ORDER BY chamber DESC, state, district").all();
 				return json(r.results.map((x) => ({ ...x, candidates: JSON.parse(x.candidates || "[]"), exit_polls: JSON.parse(x.exit_polls || "[]") })));
