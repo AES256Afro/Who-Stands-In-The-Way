@@ -2,6 +2,7 @@ import { renderAdmin, adminProfileTools, bindAdmin } from "./admin.js";
 import { shareButtons, bindShare } from "./share.js";
 import { renderMoney, alignmentBox, moneyWeb, votingRecord, bindMoney } from "./money.js";
 import { xSection, bindX } from "./xposts.js";
+import { renderChanges, profileHistory, recentStrip, bindChanges } from "./changes.js";
 import { mapHtml, stateHtml, renderIssues, renderElections, issueMatrix, leanBox, LEAN, bindViews, zipBox, renderZip, bindZip, votesBox, renderVotes, voteScore } from "./views.js";
 
 export const STANCE = {
@@ -268,6 +269,7 @@ function renderMain() {
 			<div class="card"><h2>House</h2><p class="sub">${house.length} of 435 voting seats ${next ? "decided" : "filled"} · hover or tap a dot</p>${hemicycle(house, 11, "House")}</div>
 		</section>
 		<div class="exec">${exec.map((p) => `<button class="row" style="--stance:var(--s-${stanceOf(p.id)})" data-id="${h(p.id)}">${avatar(p)}<span><span class="name">${h(p.name)}</span><br><span class="meta">${h(p.role)} · ${h(p.notes || "")}</span></span><span class="right">${pill(stanceOf(p.id))}</span></button>`).join("")}</div>
+		<div id="recent"></div>
 		${d.appearances.length ? `<div class="section-title"><h2>On the record</h2><span>Latest documented appearances</span></div>
 			<div class="feed">${d.appearances.slice(0, 6).map((a) => appHtml(a)).join("")}</div>` : ""}
 		<div class="section-title"><h2>Everyone with a vote or a veto</h2><span id="count"></span></div>
@@ -287,11 +289,12 @@ function renderMain() {
 	</main>
 	${footer()}`;
 	$("#list").innerHTML = listHtml();
+	recentStrip($("#recent"));
 }
 export const chromeOnly = () => chrome();
 export const chrome = () => `${S.admin ? `<div class="adminbar"><div class="wrap"><span>Signed in as admin — edit controls are visible on every profile.</span><span><a href="#/admin">Admin panel</a> · <a href="#" data-logout>Sign out</a></span></div></div>` : ""}
 	<div class="wrap"><header class="top"><a class="brand" href="#/">Who Stands <span>In The Way</span></a>
-	<nav><a class="btn ghost" href="#/">Dashboard</a><a class="btn ghost" href="#/zip">Find your rep</a><a class="btn ghost" href="#/votes">Key votes</a><a class="btn ghost" href="#/money">Money</a><a class="btn ghost" href="#/issues">Issues</a><a class="btn ghost" href="#/elections">2026 results</a><a class="btn" href="#/admin">${S.admin ? "Admin panel" : "Admin"}</a></nav></header></div>`;
+	<nav><a class="btn ghost" href="#/">Dashboard</a><a class="btn ghost" href="#/zip">Find your rep</a><a class="btn ghost" href="#/votes">Key votes</a><a class="btn ghost" href="#/money">Money</a><a class="btn ghost" href="#/issues">Issues</a><a class="btn ghost" href="#/changes">Changes</a><a class="btn ghost" href="#/elections">2026 results</a><a class="btn" href="#/admin">${S.admin ? "Admin panel" : "Admin"}</a></nav></header></div>`;
 export const footer = () => `<footer><div class="wrap">Baseline: the Congress sworn in January 3, 2027, from <a href="${url(S.data.meta?.roster_source || "https://en.wikipedia.org/wiki/120th_United_States_Congress")}" target="_blank" rel="noopener">Wikipedia's 120th Congress roster</a> (checked against Wikidata); returning members' accounts from the <a href="https://github.com/unitedstates/congress-legislators" target="_blank" rel="noopener">congress-legislators</a> project; returning members' support = sponsors and cosponsors of the 119th Congress bill on <a href="https://www.congress.gov/bill/119th-congress/house-bill/3069" target="_blank" rel="noopener">congress.gov</a>; money from <a href="https://www.fec.gov/data/browse-data/?tab=bulk-data" target="_blank" rel="noopener">FEC bulk filings</a> (2025–26 cycle); lean starts from each member's voting record (<a href="https://voteview.com" target="_blank" rel="noopener">Voteview</a> DW-NOMINATE, 119th Congress) and can be overridden by hand; newcomers' stances researched from campaign statements in November 2026 and linked to their source. "Not on record" means not a cosponsor and nothing documented yet. Everything after the baseline is maintained by hand.</div></footer>`;
 
 // ------------------------------------------------------------------ profile drawer
@@ -368,6 +371,7 @@ async function openProfile(id) {
 			<div class="feed">${d.appearances.map((a) => appHtml(a, false)).join("") || `<p class="note">No appearances documented yet.</p>`}</div>
 			${S.admin ? adminProfileTools.appearance(p) : ""}
 			${xSection(p, d.appearances)}
+			<div id="phist"></div>
 			<h3>Call or write them</h3>
 			<div class="contact">
 				<div><b>${p.phone_label ? "Phone" : "Washington office"}</b>${p.phone ? `<a href="${tel(p.phone)}">${h(p.phone)}</a>` : "—"}${p.phone_label ? `<span class="note">${h(p.phone_label)}</span>` : p.office ? `<span class="note">${h(p.office)}</span>` : ""}</div>
@@ -400,6 +404,7 @@ async function openProfile(id) {
 	dlg.dataset.id = p.id;
 	votingRecord(dlg.querySelector("#vrec"), p);
 	moneyWeb(dlg.querySelector("#pwebwrap"), p, f);
+	profileHistory(dlg.querySelector("#phist"), p.id);
 	if (!dlg.open) dlg.showModal();
 	dlg.scrollTop = dlg.dataset.keep === p.id ? Number(dlg.dataset.scroll || 0) : 0;
 	delete dlg.dataset.keep;
@@ -424,6 +429,7 @@ function route() {
 		else if (page.startsWith("#/issues")) renderIssues();
 		else if (page.startsWith("#/elections")) renderElections(page.split("/")[2] || "");
 		else if (page.startsWith("#/votes")) renderVotes();
+		else if (page.startsWith("#/changes")) renderChanges();
 		else if (page.startsWith("#/money")) renderMoney(page.split("/").slice(2));
 		else if (page.startsWith("#/zip")) renderZip(decodeURIComponent(page.split("/")[2] || ""));
 		else renderMain();
@@ -481,6 +487,7 @@ function bind() {
 	bindShare();
 	bindMoney();
 	bindX();
+	bindChanges();
 }
 
 load().then(() => { bind(); route(); }).catch((e) => { $("#app").innerHTML = `<p class="loading">Couldn't load data: ${h(e.message)}</p>`; });

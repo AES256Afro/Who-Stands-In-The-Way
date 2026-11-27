@@ -40,6 +40,11 @@ const SCHEMA = [
 		sector TEXT, amount REAL, cycle TEXT, source_url TEXT, notes TEXT)`,
 	`CREATE TABLE IF NOT EXISTS finance (politician_id TEXT PRIMARY KEY, as_of TEXT, data TEXT)`,
 	`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`,
+	`CREATE TABLE IF NOT EXISTS changes (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, politician_id TEXT, kind TEXT NOT NULL, field TEXT,
+		old TEXT, new TEXT, note TEXT, source_url TEXT, actor TEXT, hidden INTEGER DEFAULT 0)`,
+	`CREATE INDEX IF NOT EXISTS idx_changes_pol ON changes (politician_id, at)`,
+	`CREATE INDEX IF NOT EXISTS idx_changes_at ON changes (at)`,
 	`CREATE TABLE IF NOT EXISTS x_cache (handle TEXT PRIMARY KEY, user_id TEXT, fetched_at INTEGER, data TEXT)`,
 	`CREATE TABLE IF NOT EXISTS key_votes (
 		id TEXT PRIMARY KEY, chamber TEXT, rollnumber INTEGER, date TEXT, sort INTEGER, title TEXT, question TEXT,
@@ -75,6 +80,17 @@ const STANCES = ["supports", "public_option", "unclear", "opposes", "unknown"];
 // Left/right scale used for a member's overall lean and for their position on each issue.
 const SCALE = ["left3", "left2", "left1", "center", "right1", "right2", "right3", "unknown"];
 
+// ---------------------------------------------------------------- change log
+// An append-only public record of edits that matter (stances, lean, entries, donors, profile facts),
+// with old and new values. Admins can hide an entry (e.g. a typo fix) but not delete it.
+const now = () => new Date().toISOString();
+const change = (db, c) => db.prepare(`INSERT INTO changes (at, politician_id, kind, field, old, new, note, source_url, actor)
+	VALUES (?,?,?,?,?,?,?,?,?)`).bind(c.at || now(), c.politician_id ?? null, c.kind, c.field ?? null,
+	c.old == null ? null : String(c.old), c.new == null ? null : String(c.new), c.note ?? null, c.source_url ?? null, c.actor || "admin");
+const PROFILE_FIELDS = ["name", "party", "chamber", "role", "state", "district", "status", "voting", "phone", "website", "twitter", "term_end", "next_election"];
+// Earlier seeded wording of the Medicare for All description; replaced on refresh only if never hand-edited.
+const OLD_POLICY_TEXT = ["Single-payer national health insurance: the Medicare for All Act (H.R.3069 / S.1506, 119th Congress). A public option does not count as support."];
+
 let ready = null;
 
 // Columns added after the first deploy. ALTER fails harmlessly if the column exists.
@@ -95,10 +111,14 @@ async function init(db) {
 	await db.batch(SCHEMA.map((s) => db.prepare(s)));
 	for (const m of MIGRATIONS) await db.prepare(m).run().catch(() => {});
 	const seed = (await import("../seed/seed.json")).default;
+	// Replace old seeded wording of policy descriptions (only if it was never edited by hand). Cheap; runs every start.
+	await db.batch((seed.policies || []).flatMap((pol) => OLD_POLICY_TEXT.map((old) =>
+		db.prepare("UPDATE policies SET description = ? WHERE id = ? AND description = ?").bind(pol.description, pol.id, old))));
 	const have = await db.prepare("SELECT value FROM meta WHERE key = 'seed_version'").first();
 	if (have?.value === seed.version) return;
 	// Load or refresh the baseline. Roster and FEC figures are replaced; anything entered by hand
 	// (stances you changed, appearances, donors, outlets, policies, people you added) is kept.
+	const before = have ? new Map((await db.prepare("SELECT politician_id, stance FROM positions WHERE policy_id = 'm4a'").all()).results.map((r) => [r.politician_id, r.stance])) : null;
 	const stmts = [];
 	const bulk = (sql, cols, rows, size) => {
 		const sel = cols.map((c) => `json_extract(value,'$.${c}')`).join(",");
@@ -137,6 +157,20 @@ async function init(db) {
 	bulk("INSERT INTO finance (%COLS%) SELECT %SEL% FROM json_each(?)", ["politician_id", "as_of", "data"], seed.finance.map((f) => ({ ...f, data: JSON.stringify(f.data) })), 60);
 	stmts.push(db.prepare("INSERT INTO meta (key, value) VALUES ('seed_version', ?), ('seed_meta', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").bind(seed.version, JSON.stringify(seed.meta || {})));
 	await db.batch(stmts);
+	if (before) {
+		// Log Medicare for All stance changes that came with this data update (new research, cosponsorships).
+		const after = (await db.prepare("SELECT politician_id, stance, note, source_url FROM positions WHERE policy_id = 'm4a'").all()).results;
+		const live = new Set((await db.prepare("SELECT id FROM politicians WHERE status != 'former'").all()).results.map((r) => r.id));
+		const logs = [];
+		for (const r of after) {
+			const was = before.get(r.politician_id) || "unknown";
+			if (was !== r.stance && live.has(r.politician_id)) logs.push(change(db, { politician_id: r.politician_id, kind: "stance", field: "m4a", old: was, new: r.stance, note: r.note, source_url: r.source_url, actor: "data update" }));
+		}
+		for (const [pid, was] of before) {
+			if (!after.some((r) => r.politician_id === pid) && was !== "unknown" && live.has(pid)) logs.push(change(db, { politician_id: pid, kind: "stance", field: "m4a", old: was, new: "unknown", actor: "data update" }));
+		}
+		for (let i = 0; i < logs.length; i += 80) await db.batch(logs.slice(i, i + 80));
+	}
 }
 
 const json = (data, status = 200, headers = {}) =>
@@ -245,26 +279,37 @@ async function admin(req, env, parts) {
 		const row = clean("positions", body);
 		if (!row.politician_id || !row.policy_id || !STANCES.includes(row.stance)) return fail(400, "politician_id, policy_id and a valid stance are required");
 		if (badUrl(row)) return fail(400, "Links must start with http:// or https://");
-		await db.prepare(`INSERT INTO positions (politician_id, policy_id, stance, note, source_url, updated_at)
+		const prev = await db.prepare("SELECT stance, note, source_url FROM positions WHERE politician_id = ? AND policy_id = ?").bind(row.politician_id, row.policy_id).first();
+		const stmts = [db.prepare(`INSERT INTO positions (politician_id, policy_id, stance, note, source_url, updated_at)
 			VALUES (?,?,?,?,?,?) ON CONFLICT (politician_id, policy_id) DO UPDATE SET
 			stance = excluded.stance, note = excluded.note, source_url = excluded.source_url, updated_at = excluded.updated_at`)
-			.bind(row.politician_id, row.policy_id, row.stance, row.note ?? null, row.source_url ?? null, new Date().toISOString().slice(0, 10)).run();
+			.bind(row.politician_id, row.policy_id, row.stance, row.note ?? null, row.source_url ?? null, new Date().toISOString().slice(0, 10))];
+		const was = prev?.stance || "unknown";
+		if (was !== row.stance) stmts.push(change(db, { politician_id: row.politician_id, kind: "stance", field: row.policy_id, old: was, new: row.stance, note: row.note, source_url: row.source_url }));
+		else if ((prev?.note || null) !== (row.note ?? null) || (prev?.source_url || null) !== (row.source_url ?? null)) stmts.push(change(db, { politician_id: row.politician_id, kind: "evidence", field: row.policy_id, old: prev?.note, new: row.note, source_url: row.source_url }));
+		await db.batch(stmts);
 		return json({ ok: true });
 	}
 	if (table === "issue_positions" && method === "PUT") {
 		const row = clean("issue_positions", body);
 		if (!row.politician_id || !row.issue_id || !SCALE.includes(row.position)) return fail(400, "politician_id, issue_id and a valid position are required");
 		if (badUrl(row)) return fail(400, "Links must start with http:// or https://");
-		await db.prepare(`INSERT INTO issue_positions (politician_id, issue_id, position, note, source_url, updated_at)
+		const prev = await db.prepare("SELECT position FROM issue_positions WHERE politician_id = ? AND issue_id = ?").bind(row.politician_id, row.issue_id).first();
+		const stmts = [db.prepare(`INSERT INTO issue_positions (politician_id, issue_id, position, note, source_url, updated_at)
 			VALUES (?,?,?,?,?,?) ON CONFLICT (politician_id, issue_id) DO UPDATE SET
 			position = excluded.position, note = excluded.note, source_url = excluded.source_url, updated_at = excluded.updated_at`)
-			.bind(row.politician_id, row.issue_id, row.position, row.note ?? null, row.source_url ?? null, new Date().toISOString().slice(0, 10)).run();
+			.bind(row.politician_id, row.issue_id, row.position, row.note ?? null, row.source_url ?? null, new Date().toISOString().slice(0, 10))];
+		if ((prev?.position || "unknown") !== row.position) stmts.push(change(db, { politician_id: row.politician_id, kind: "issue", field: row.issue_id, old: prev?.position || "unknown", new: row.position, note: row.note, source_url: row.source_url }));
+		await db.batch(stmts);
 		return json({ ok: true });
 	}
 	if (table === "lean" && method === "PUT" && id) {
 		if (!SCALE.includes(body.lean)) return fail(400, "Pick a valid lean");
 		const note = typeof body.lean_note === "string" ? body.lean_note.trim() || null : null;
-		await db.prepare("UPDATE politicians SET lean = ?, lean_note = ?, lean_source = 'admin' WHERE id = ?").bind(body.lean, note, id).run();
+		const prev = await db.prepare("SELECT lean FROM politicians WHERE id = ?").bind(id).first();
+		const stmts = [db.prepare("UPDATE politicians SET lean = ?, lean_note = ?, lean_source = 'admin' WHERE id = ?").bind(body.lean, note, id)];
+		if ((prev?.lean || "unknown") !== body.lean) stmts.push(change(db, { politician_id: id, kind: "lean", old: prev?.lean || "unknown", new: body.lean, note }));
+		await db.batch(stmts);
 		return json({ ok: true });
 	}
 	if (table === "key_votes" && method === "PUT" && id) {
@@ -276,7 +321,14 @@ async function admin(req, env, parts) {
 		if (badUrl(row)) return fail(400, "Links must start with http:// or https://");
 		const keys = Object.keys(row);
 		if (!keys.length) return fail(400, "Nothing to update");
-		await db.prepare(`UPDATE key_votes SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE id = ?`).bind(...keys.map((k) => row[k]), id).run();
+		const prev = await db.prepare("SELECT * FROM key_votes WHERE id = ?").bind(id).first();
+		const stmts = [db.prepare(`UPDATE key_votes SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE id = ?`).bind(...keys.map((k) => row[k]), id)];
+		for (const k of ["coverage_side", "hidden", "title"]) if (k in row && prev && String(prev[k] ?? "") !== String(row[k] ?? "")) stmts.push(change(db, { kind: "key_vote", field: `${id}:${k}`, old: prev[k], new: row[k] }));
+		await db.batch(stmts);
+		return json({ ok: true });
+	}
+	if (table === "changes" && method === "PUT" && id) {
+		await db.prepare("UPDATE changes SET hidden = ? WHERE id = ?").bind(body.hidden ? 1 : 0, id).run();
 		return json({ ok: true });
 	}
 	if (!["politicians", "policies", "outlets", "appearances", "donors", "issues", "issue_polls"].includes(table)) return fail(404, "Not found");
@@ -294,6 +346,9 @@ async function admin(req, env, parts) {
 		try {
 			const res = await db.prepare(`INSERT INTO ${table} (${keys.join(",")}) VALUES (${keys.map(() => "?").join(",")})`)
 				.bind(...keys.map((k) => row[k])).run();
+			if (table === "appearances") await change(db, { politician_id: row.politician_id, kind: "entry", field: row.kind, new: row.title || row.kind || "Entry", note: row.quote, source_url: row.clip_url || row.post_url }).run();
+			if (table === "donors") await change(db, { politician_id: row.politician_id, kind: "donor", field: row.donor_type, new: `${row.donor_name}${row.amount != null ? ` ($${Math.round(row.amount).toLocaleString("en-US")})` : ""}`, note: row.notes, source_url: row.source_url }).run();
+			if (table === "politicians") await change(db, { politician_id: row.id, kind: "added", new: row.name }).run();
 			return json({ ok: true, id: textKey ? row.id : res.meta.last_row_id });
 		} catch (e) {
 			return fail(409, String(e.message || e).includes("UNIQUE") ? "That ID already exists" : "Could not save");
@@ -308,11 +363,20 @@ async function admin(req, env, parts) {
 		const keys = Object.keys(row);
 		if (!keys.length) return fail(400, "Nothing to update");
 		for (const r of REQUIRED[table]) if (r !== "id" && r in row && row[r] == null) return fail(400, `${r} is required`);
-		await db.prepare(`UPDATE ${table} SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE id = ?`).bind(...keys.map((k) => row[k]), id).run();
+		const prev = table === "politicians" ? await db.prepare("SELECT * FROM politicians WHERE id = ?").bind(id).first() : null;
+		const stmts = [db.prepare(`UPDATE ${table} SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE id = ?`).bind(...keys.map((k) => row[k]), id)];
+		if (prev) for (const k of PROFILE_FIELDS) if (k in row && String(prev[k] ?? "") !== String(row[k] ?? "")) stmts.push(change(db, { politician_id: id, kind: "profile", field: k, old: prev[k], new: row[k] }));
+		await db.batch(stmts);
 		return json({ ok: true });
 	}
 	if (method === "DELETE") {
 		const stmts = [db.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id)];
+		if (table === "appearances" || table === "donors" || table === "politicians") {
+			const prev = await db.prepare(`SELECT * FROM ${table} WHERE id = ?`).bind(id).first();
+			if (prev && table === "appearances") stmts.push(change(db, { politician_id: prev.politician_id, kind: "entry_removed", field: prev.kind, old: prev.title || prev.kind, source_url: prev.clip_url }));
+			if (prev && table === "donors") stmts.push(change(db, { politician_id: prev.politician_id, kind: "donor_removed", old: prev.donor_name }));
+			if (prev && table === "politicians") stmts.push(change(db, { politician_id: id, kind: "removed", old: prev.name }));
+		}
 		if (table === "politicians") {
 			for (const t of ["positions", "appearances", "donors", "finance", "issue_positions", "terms"]) stmts.push(db.prepare(`DELETE FROM ${t} WHERE politician_id = ?`).bind(id));
 		}
@@ -403,9 +467,49 @@ async function sharePage(req, env, id) {
 	return new Response(html, { status: p ? 200 : 404, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=300" } });
 }
 
+// ---------------------------------------------------------------- RSS feed of changes: /changes.xml
+const LEAN_WORD = { left3: "Far left", left2: "Left", left1: "Slightly left", center: "Center", right1: "Slightly right", right2: "Right", right3: "Far right", unknown: "Unknown" };
+const STANCE_WORD = { supports: "Supports", public_option: "Public option only", unclear: "Wishy-washy", opposes: "Opposes", unknown: "Not on record" };
+function describeChange(c) {
+	const who = c.politician_name || "Site";
+	switch (c.kind) {
+		case "stance": return `${who}: Medicare for All stance changed from ${STANCE_WORD[c.old] || c.old} to ${STANCE_WORD[c.new] || c.new}`;
+		case "evidence": return `${who}: new evidence on Medicare for All stance`;
+		case "lean": return `${who}: lean changed from ${LEAN_WORD[c.old] || c.old} to ${LEAN_WORD[c.new] || c.new}`;
+		case "issue": return `${who}: position on ${c.field} changed`;
+		case "entry": return `${who}: new entry logged: ${c.new}`;
+		case "entry_removed": return `${who}: entry removed: ${c.old}`;
+		case "donor": return `${who}: donor documented: ${c.new}`;
+		case "donor_removed": return `${who}: donor entry removed: ${c.old}`;
+		case "profile": return `${who}: ${c.field} changed from ${c.old ?? "blank"} to ${c.new ?? "blank"}`;
+		case "added": return `${who} added to the tracker`;
+		case "removed": return `${c.old} removed from the tracker`;
+		case "key_vote": return `Key vote updated (${c.field})`;
+		default: return `${who}: ${c.kind}`;
+	}
+}
+async function changesFeed(req, env) {
+	const origin = new URL(req.url).origin;
+	const rows = (await env.DB.prepare(`SELECT c.*, p.name AS politician_name FROM changes c LEFT JOIN politicians p ON p.id = c.politician_id
+		WHERE c.hidden = 0 ORDER BY c.at DESC, c.id DESC LIMIT 60`).all()).results;
+	const items = rows.map((c) => {
+		const link = c.politician_id ? `${origin}/m/${encodeURIComponent(c.politician_id)}` : `${origin}/#/changes`;
+		const desc = [c.note, c.source_url ? `Source: ${c.source_url}` : "", c.actor === "data update" ? "(from a data update)" : ""].filter(Boolean).join(" ");
+		return `<item><title>${esc(describeChange(c))}</title><link>${esc(link)}</link><guid isPermaLink="false">change-${c.id}</guid><pubDate>${new Date(c.at).toUTCString()}</pubDate>${desc ? `<description>${esc(desc)}</description>` : ""}</item>`;
+	}).join("");
+	const xml = `<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Who Stands In The Way: changes</title>
+<link>${esc(origin)}/#/changes</link><description>Stance changes, new evidence and other updates to the Medicare for All tracker.</description>${items}</channel></rss>`;
+	return new Response(xml, { headers: { "content-type": "application/rss+xml; charset=utf-8", "cache-control": "public, max-age=300" } });
+}
+
 export default {
 	async fetch(req, env) {
 		const url = new URL(req.url);
+		if (url.pathname === "/changes.xml") {
+			ready ??= init(env.DB).catch((e) => { ready = null; throw e; });
+			await ready;
+			return changesFeed(req, env);
+		}
 		if (url.pathname.startsWith("/m/")) {
 			ready ??= init(env.DB).catch((e) => { ready = null; throw e; });
 			await ready;
@@ -419,6 +523,17 @@ export default {
 
 			if (parts[0] === "bootstrap" && req.method === "GET") return json(await bootstrap(env.DB));
 			if (parts[0] === "x" && parts[1] && req.method === "GET") return json(await xPosts(env, parts[1]));
+			if (parts[0] === "changes" && req.method === "GET") {
+				const admin = await isAdmin(req, env);
+				const pid = url.searchParams.get("pid"), kind = url.searchParams.get("kind");
+				const limit = Math.min(Number(url.searchParams.get("limit")) || 100, 500);
+				const where = [admin ? "1" : "c.hidden = 0"], args = [];
+				if (pid) { where.push("c.politician_id = ?"); args.push(pid); }
+				if (kind) { where.push("c.kind IN (SELECT value FROM json_each(?))"); args.push(JSON.stringify(kind.split(","))); }
+				const r = await env.DB.prepare(`SELECT c.*, p.name AS politician_name, p.party, p.state, p.chamber, p.district FROM changes c
+					LEFT JOIN politicians p ON p.id = c.politician_id WHERE ${where.join(" AND ")} ORDER BY c.at DESC, c.id DESC LIMIT ?`).bind(...args, limit).all();
+				return json(r.results);
+			}
 			if (parts[0] === "races" && req.method === "GET") {
 				const r = await env.DB.prepare("SELECT * FROM races ORDER BY chamber DESC, state, district").all();
 				return json(r.results.map((x) => ({ ...x, candidates: JSON.parse(x.candidates || "[]"), exit_polls: JSON.parse(x.exit_polls || "[]") })));
