@@ -47,7 +47,7 @@ export const url = (u) => (/^https?:\/\//i.test(u || "") ? h(u) : "#");
 export const money = (n) => (n == null ? "—" : "$" + Math.round(n).toLocaleString("en-US"));
 export const short = (n) => (n >= 1e6 ? "$" + (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e3 ? "$" + Math.round(n / 1e3) + "k" : "$" + Math.round(n || 0));
 export const seat = (p) => (p.chamber === "governor" ? `${p.role}, ${p.state}` : p.chamber === "state_upper" || p.chamber === "state_lower"
-	? `${p.state} ${p.chamber === "state_upper" ? "Senate" : "House"}${p.sdistrict ? " District " + p.sdistrict : ""}` : p.chamber === "executive" ? p.role : `${p.state}${p.chamber === "house" && p.district ? "-" + p.district : p.chamber === "house" ? "-AL" : ""}`);
+	? `${p.state} ${p.chamber === "state_upper" ? "Senate" : p.role === "Assemblymember" ? "Assembly" : p.role === "Delegate" ? "House of Delegates" : "House"}${p.sdistrict ? " District " + p.sdistrict : ""}` : p.chamber === "executive" ? p.role : `${p.state}${p.chamber === "house" && p.district ? "-" + p.district : p.chamber === "house" ? "-AL" : ""}`);
 export const year = (d) => (d ? d.slice(0, 4) : "");
 export const fmtDate = (d) => (d ? new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "");
 

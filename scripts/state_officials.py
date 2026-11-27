@@ -32,7 +32,15 @@ STATE_CODES = [s for s in sorted(set(STATES.values())) if s not in ("PR", "GU", 
 def party_of(person):
     ps = person.get("party") or []
     cur = [p for p in ps if not p.get("end_date")] or ps
-    name = cur[-1]["name"] if cur else ""
+    # Fusion tickets come as one label, e.g. "Democratic/Working Families": the first party is the major one.
+    names = [p["name"].split("/")[0].strip() for p in cur]
+    if names and all(n == "Nonpartisan" for n in names):
+        return ""  # Nebraska's unicameral legislature is officially nonpartisan
+    # Fusion states list several parties (e.g. Democratic + Working Families): prefer the major party.
+    for major in ("Democratic", "Democratic-Farmer-Labor", "Democratic–Farmer–Labor", "Republican"):
+        if major in names:
+            return PARTY[major]
+    name = names[-1] if names else ""
     return PARTY.get(name, "I" if name else "")
 
 
