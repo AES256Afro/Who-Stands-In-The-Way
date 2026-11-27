@@ -455,14 +455,15 @@ async function sharePage(req, env, id) {
 	const p = await env.DB.prepare(`SELECT p.id, p.name, p.role, p.state, p.district, p.chamber, p.party, p.phone,
 		(SELECT stance FROM positions WHERE politician_id = p.id AND policy_id = 'm4a') AS stance,
 		COALESCE(json_extract(f.data,'$.health_total'),0) + COALESCE((SELECT SUM(json_extract(value,'$.health_total'))
-			FROM json_each(json_extract(f.data,'$.leadership'))),0) AS health, json_extract(f.data,'$.employees.total') AS emp
+			FROM json_each(json_extract(f.data,'$.leadership'))),0) AS health, json_extract(f.data,'$.employees.total') AS emp,
+		json_extract(f.data,'$.state') AS state_money
 		FROM politicians p LEFT JOIN finance f ON f.politician_id = p.id WHERE p.id = ?`).bind(id).first();
 	const target = p ? `${origin}/#/p/${encodeURIComponent(p.id)}` : `${origin}/`;
 	const where = p ? (p.chamber === "senate" ? `Senator, ${p.state}` : p.chamber === "house" ? `${p.state}-${p.district || "AL"}` : p.role) : "";
 	const title = p ? `${p.name} ${STANCE_LINE[p.stance || "unknown"]}` : "Who Stands In The Way";
 	const money = (n) => "$" + Math.round(n || 0).toLocaleString("en-US");
 	const bits = [];
-	if (p && (p.health || 0) > 0) bits.push(`${money(p.health)} from health-industry PACs`);
+	if (p && (p.health || 0) > 0) bits.push(`${money(p.health)} from health-industry ${p.state_money ? "donors" : "PACs"}`);
 	if (p && (p.emp || 0) > 0) bits.push(`${money(p.emp)} from health-industry employees`);
 	const desc = p ? `${p.party}-${where}. ${bits.join(" · ")}${bits.length ? ". " : ""}${p.phone ? `Call ${p.phone}. ` : ""}See the record and who funds them.`
 		: "Where every member of Congress stands on Medicare for All.";
@@ -557,13 +558,18 @@ export default {
 				const g = await env.DB.prepare(`SELECT p.id, p.name, p.party, p.state, p.role, p.status, COALESCE(s.stance, 'unknown') AS stance
 					FROM politicians p LEFT JOIN positions s ON s.politician_id = p.id AND s.policy_id = 'm4a'
 					WHERE p.level = 'state' AND p.chamber = 'governor' AND p.status != 'former'`).all();
-				return json({ counts: r.results, governors: g.results });
+				// States whose campaign-finance agency data is loaded: officials matched and their health-industry money.
+				const m = await env.DB.prepare(`SELECT p.state, COUNT(*) AS n, SUM(json_extract(f.data, '$.total')) AS raised,
+					SUM(json_extract(f.data, '$.health_total')) AS health FROM finance f JOIN politicians p ON p.id = f.politician_id
+					WHERE p.level = 'state' GROUP BY p.state`).all();
+				return json({ counts: r.results, governors: g.results, money: m.results });
 			}
 			if (parts[0] === "state" && parts[1] && req.method === "GET") {
 				const st = parts[1].toUpperCase().slice(0, 2);
 				const r = await env.DB.prepare(`SELECT p.id, p.name, p.first, p.last, p.chamber, p.role, p.state, p.sdistrict, p.party, p.status,
-					p.photo_url, p.phone, p.email, p.website, p.twitter, p.notes, COALESCE(s.stance, 'unknown') AS stance, s.note AS stance_note, s.source_url
-					FROM politicians p LEFT JOIN positions s ON s.politician_id = p.id AND s.policy_id = 'm4a'
+					p.photo_url, p.phone, p.email, p.website, p.twitter, p.notes, COALESCE(s.stance, 'unknown') AS stance, s.note AS stance_note, s.source_url,
+					json_extract(f.data, '$.total') AS raised, json_extract(f.data, '$.health_total') AS health
+					FROM politicians p LEFT JOIN positions s ON s.politician_id = p.id AND s.policy_id = 'm4a' LEFT JOIN finance f ON f.politician_id = p.id
 					WHERE p.level = 'state' AND p.state = ? AND p.status != 'former' ORDER BY p.chamber, p.last`).bind(st).all();
 				return json(r.results);
 			}

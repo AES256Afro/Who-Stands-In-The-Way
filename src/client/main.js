@@ -301,6 +301,34 @@ export const chrome = () => `${S.admin ? `<div class="adminbar"><div class="wrap
 	<nav><a class="btn ghost" href="#/">Dashboard</a><a class="btn ghost" href="#/zip">Find your rep</a><a class="btn ghost" href="#/votes">Key votes</a><a class="btn ghost" href="#/money">Money</a><a class="btn ghost" href="#/states">States</a><a class="btn ghost" href="#/issues">Issues</a><a class="btn ghost" href="#/changes">Changes</a><a class="btn ghost" href="#/elections">2026 results</a><a class="btn" href="#/admin">${S.admin ? "Admin panel" : "Admin"}</a></nav></header></div>`;
 export const footer = () => `<footer><div class="wrap">Baseline: the Congress sworn in January 3, 2027, from <a href="${url(S.data.meta?.roster_source || "https://en.wikipedia.org/wiki/120th_United_States_Congress")}" target="_blank" rel="noopener">Wikipedia's 120th Congress roster</a> (checked against Wikidata); returning members' accounts from the <a href="https://github.com/unitedstates/congress-legislators" target="_blank" rel="noopener">congress-legislators</a> project; returning members' support = sponsors and cosponsors of the 119th Congress bill on <a href="https://www.congress.gov/bill/119th-congress/house-bill/3069" target="_blank" rel="noopener">congress.gov</a>; money from <a href="https://www.fec.gov/data/browse-data/?tab=bulk-data" target="_blank" rel="noopener">FEC bulk filings</a> (2025–26 cycle); lean starts from each member's voting record (<a href="https://voteview.com" target="_blank" rel="noopener">Voteview</a> DW-NOMINATE, 119th Congress) and can be overridden by hand; newcomers' stances researched from campaign statements in November 2026 and linked to their source. "Not on record" means not a cosponsor and nothing documented yet. Everything after the baseline is maintained by hand.</div></footer>`;
 
+// ------------------------------------------------------------------ state campaign money (state agencies' open data)
+const DONOR_KIND = { individual: ["Individuals", "ind"], pac: ["PACs & committees", "pac"], party: ["Party & caucus", "party"], self: ["Self & family", "self"], other: ["Businesses, unions & other", "other"] };
+function stateMoney(p, f) {
+	const cover = S.data.meta?.state_money?.[p.state];
+	const find = `<a href="https://ballotpedia.org/Campaign_finance_requirements_in_${encodeURIComponent(stateName(p.state).replace(/ /g, "_"))}" target="_blank" rel="noopener">where to find it ↗</a>`;
+	if (!f?.state) return `<h3>Who pays them</h3><p class="note">${cover
+		? `No campaign committee in the ${h(cover.name)} data matched ${h(p.name)}${p.status === "incoming" ? " yet" : ""}. <a href="${url(cover.url)}" target="_blank" rel="noopener">Search the data ↗</a>`
+		: `State campaign money is loaded for ${Object.keys(S.data.meta?.state_money || {}).map(stateName).join(", ") || "a few states"} so far. ${h(stateName(p.state))}'s campaign-finance agency publishes every donation; ${find}.`}</p>`;
+	const k = {};
+	for (const [kind, v] of Object.entries(f.kinds || {})) { const key = DONOR_KIND[kind] ? kind : "other"; k[key] = (k[key] || 0) + v; }
+	const parts = Object.keys(DONOR_KIND).filter((x) => k[x] > 0).map((x) => [DONOR_KIND[x][0], k[x], DONOR_KIND[x][1]]);
+	const items = f.health_items || [];
+	return `<h3>Who pays them <small>${h(f.source)}, ${h(f.cycle)} campaign</small></h3>
+		<div class="kv">
+			<div><b>${money(f.total)}</b><span>Raised (${(f.n || 0).toLocaleString("en-US")} itemized gifts)</span></div>
+			<div><b>${money(f.health_total)}</b><span>From health-industry donors</span></div>
+			<div><b>${money(k.pac || 0)}</b><span>From PACs & committees</span></div>
+		</div>
+		${parts.length ? `<div class="mbar" role="img" aria-label="Where the campaign's money came from">${parts.map((x) => `<i style="flex:${x[1]};background:var(--m-${x[2]})" title="${h(x[0])}: ${money(x[1])}"></i>`).join("")}</div>
+		<div class="legend">${parts.map((x) => `<span><i class="dot" style="background:var(--m-${x[2]})"></i>${h(x[0])} ${money(x[1])}</span>`).join("")}</div>` : ""}
+		${items.length ? `<h3>Health-industry money <small>${Object.entries(f.health_by_sector || {}).map(([s, v]) => `${SECTOR[s] || s} ${short(v)}`).join(" · ")}</small></h3>
+			<table class="t"><tr><th>Donor</th><th>Sector</th><th class="n">Given</th></tr>${items.map((x) => `<tr><td>${h(x.name)}${x.via === "employees" ? ` <span class="note">(employees)</span>` : ""}</td><td><span class="tag">${h(SECTOR[x.sector] || x.sector)}</span></td><td class="n">${money(x.amount)}</td></tr>`).join("")}</table>`
+			: `<p class="note">No gifts from drugmakers, insurers, hospital groups or their PACs found in this campaign's reports.</p>`}
+		${(f.top_orgs || []).length ? `<details class="admin"><summary>Biggest organizational donors</summary>
+			<table class="t"><tr><th>Donor</th><th class="n">Given</th></tr>${f.top_orgs.map((x) => `<tr><td>${h(x.name)}${x.sector ? ` <span class="tag">${h(SECTOR[x.sector])}</span>` : ""}</td><td class="n">${money(x.amount)}</td></tr>`).join("")}</table></details>` : ""}
+		<p class="note">From the <a href="${url(f.dataset_url || f.source_url)}" target="_blank" rel="noopener">${h(f.source)}'s open data ↗</a>: contributions itemized in the campaign's reports${f.committees?.length ? ` (${f.committees.map(h).join(", ")})` : ""}, as of ${h(f.as_of || "")}. Health-industry donors are matched by name: companies, their PACs and trade groups, plus people whose listed employer is a drugmaker, insurer, device maker or for-profit care chain (shown as employer totals; no individual donor is named). Nurses, unions and nonprofit hospital staff are left out.</p>`;
+}
+
 // ------------------------------------------------------------------ profile drawer
 async function openProfile(id) {
 	const dlg = $("#drawer");
@@ -396,7 +424,7 @@ async function openProfile(id) {
 				${p.bluesky ? link("https://bsky.app/profile/" + encodeURIComponent(p.bluesky), "Bluesky") : ""}${p.facebook ? link("https://www.facebook.com/" + encodeURIComponent(p.facebook), "Facebook") : ""}${p.instagram ? link("https://www.instagram.com/" + encodeURIComponent(p.instagram), "Instagram") : ""}${link(p.youtube, "YouTube")}</div>
 
 			${alts.length ? `<p class="note">"Other X" accounts come from Wikidata and may be campaign, personal or retired handles — verify before citing.</p>` : ""}
-			${state ? `<h3>Who pays them</h3><p class="note">State campaign money isn't covered yet. ${h(stateName(p.state))}'s campaign-finance agency publishes every donation; <a href="https://ballotpedia.org/Campaign_finance_requirements_in_${encodeURIComponent(stateName(p.state).replace(/ /g, "_"))}" target="_blank" rel="noopener">where to find it ↗</a>.</p>` : `<h3>Who pays them <small>FEC, ${h(f?.cycle || "2025–26")} cycle</small></h3>
+			${state ? stateMoney(p, f) : `<h3>Who pays them <small>FEC, ${h(f?.cycle || "2025–26")} cycle</small></h3>
 			${moneyHtml}`}
 			${d.donors.length ? `<h3>Documented by hand</h3><table class="t"><tr><th>Donor</th><th>Type</th><th class="n">Amount</th><th></th></tr>${d.donors.map((x) => `<tr><td>${x.source_url ? `<a href="${url(x.source_url)}" target="_blank" rel="noopener">${h(x.donor_name)}</a>` : h(x.donor_name)}${x.sector ? ` <span class="tag">${h(x.sector)}</span>` : ""}${x.notes ? `<br><span class="note">${h(x.notes)}</span>` : ""}</td><td>${h(x.donor_type || "")}${x.cycle ? ` · ${h(x.cycle)}` : ""}</td><td class="n">${x.amount != null ? money(x.amount) : "—"}</td><td>${S.admin ? `<button class="btn small danger" data-del="donors" data-delid="${x.id}">Delete</button>` : ""}</td></tr>`).join("")}</table>` : ""}
 			${S.admin ? adminProfileTools.donor(p) : ""}

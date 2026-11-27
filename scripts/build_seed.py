@@ -828,6 +828,14 @@ if _so.exists():
                             "bluesky": "", "mastodon": "", "caucus": "", **x})
         state_people += 1
     positions += so["positions"]
+# State campaign money (scripts/state_finance.py): states with open contribution data.
+_sf = RAW / "state_finance.json"
+meta_state_money = {}
+if _sf.exists():
+    sf = json.load(open(_sf, encoding="utf-8"))
+    ids = {p_["id"] for p_ in politicians}
+    finance += [{"politician_id": pid, "as_of": sf["generated"], "data": d} for pid, d in sf["finance"].items() if pid in ids]
+    meta_state_money = sf["states"]
 for p_ in politicians:
     p_.setdefault("level", "federal")
     p_.setdefault("sdistrict", "")
@@ -855,7 +863,7 @@ meta = {"congresses": [{"id": 120, "label": "120th Congress (from Jan 3, 2027)"}
                        {"id": 119, "label": "119th Congress (until Jan 3, 2027)"}], "default_congress": 120,
         "exit_national": exit_polls["national"],
         "results_source": "https://en.wikipedia.org/wiki/2026_United_States_House_of_Representatives_elections",
-        "congress": "120th", "sworn_in": "2027-01-03", "undecided": undecided,
+        "congress": "120th", "sworn_in": "2027-01-03", "state_money": meta_state_money, "undecided": undecided,
         "sector_votes": {v["id"]: {k: v.get(k) for k in ("chamber", "date", "title", "industry_side", "industry_position", "industry_source_url", "source_url", "sector")}
                          for v in sector_votes},
         "roster_source": f"https://en.wikipedia.org/w/index.php?title=120th_United_States_Congress&oldid={ROSTER_REV}"}
@@ -880,7 +888,8 @@ print("no photo:", sum(1 for p in politicians if not p["photo_url"]), "no websit
 print("M4A supporters", dict(sup), "cosponsors not returning:", len(set(support) - {p['id'] for p in politicians}))
 print("with twitter", sum(1 for p in politicians if p["twitter"]), "alt", sum(1 for p in politicians if p["twitter_alt"]),
       "bluesky", sum(1 for p in politicians if p["bluesky"]), "website", sum(1 for p in politicians if p["website"]))
-fd = [f["data"] for f in finance]
+fd = [f["data"] for f in finance if not f["data"].get("state")]
+print("state finance", sum(1 for f in finance if f["data"].get("state")))
 print("finance has_data", sum(1 for f in fd if f["has_data"]), "with PAC gifts", sum(1 for f in fd if f["pac_count"]),
       "with health PACs", sum(1 for f in fd if f["health_total"] > 0), "with outside", sum(1 for f in fd if f["outside"]["count"]))
 print("terms", collections.Counter(t["congress"] for t in terms), "departing", departing,
