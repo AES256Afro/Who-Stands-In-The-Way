@@ -3,6 +3,9 @@
 Tracks where every member of the Congress sworn in on January 3, 2027 (plus the President and VP) stands on Medicare for All,
 what they've said on the record, and who funds them. One Cloudflare Worker + D1 database.
 
+Live at https://whostandsintheway.com (and www; the workers.dev address also works). The domain is set in
+`cloudflare.config.ts` (`domains`), so every deploy keeps it attached.
+
 - **Dashboard** (`/`): vote charts, searchable roster, profile drawer with stance, appearances, socials, money.
 - **Map**: every state's senators and House seats, colored by party, Medicare for All stance or lean; tap a state for its members.
 - **Issues** (`/#/issues`): the ~30 issues Americans rank highest, with linked polling; each profile has a position matrix on them.
@@ -55,6 +58,18 @@ then redeploy with `npx cf deploy --secrets-file .secrets.env`. The Worker only 
 X loads until a visitor clicks "Show X posts".
 
 ## Refresh the baseline data
+
+One command refreshes everything (FEC money, leadership PACs, roster from Wikipedia, voting records, ZIP table)
+and then checks the result:
+
+```
+scripts/refresh_all.sh            # downloads ~3 GB of FEC files first
+scripts/refresh_all.sh --no-download
+```
+
+`scripts/check_refresh.py` fails the run if members, races or money totals drop sharply, so bad data isn't
+deployed. Deploy afterwards with `npx cf deploy --secrets-file .secrets.env`.
+
 
 Raw downloads live in `data/raw/` (not committed). `scripts/fetch_roster_120.py` downloads the incoming roster
 (add `--refresh` to re-pull Wikipedia), then `scripts/build_seed.py` turns everything into `seed/seed.json`.

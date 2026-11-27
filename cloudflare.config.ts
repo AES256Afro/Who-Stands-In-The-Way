@@ -6,6 +6,9 @@ export default defineConfig({
 		name: "who-stands-in-the-way",
 		compatibilityDate: "2026-11-17",
 		entrypoint,
+		// Served at the custom domain (and www); the workers.dev address keeps working too.
+		domains: ["whostandsintheway.com", "www.whostandsintheway.com"],
+		workersDev: true, // keep the workers.dev address for health checks and the scheduled refresh
 		assets: {
 			notFoundHandling: "single-page-application",
 			runWorkerFirst: ["/api/*", "/m/*", "/changes.xml"],
