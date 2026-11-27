@@ -11,7 +11,7 @@ const SCHEMA = [
 		next_election TEXT, twitter TEXT, twitter_alt TEXT, facebook TEXT, instagram TEXT, youtube TEXT, bluesky TEXT, mastodon TEXT,
 		opensecrets_id TEXT, fec_ids TEXT, govtrack_id INTEGER, wikipedia TEXT, ballotpedia TEXT, photo_url TEXT, notes TEXT,
 		lean TEXT, ideology REAL, lean_note TEXT, lean_source TEXT, phone_label TEXT, offices TEXT, committees TEXT,
-		level TEXT, sdistrict TEXT, email TEXT)`,
+		level TEXT, sdistrict TEXT, email TEXT, caucuses TEXT)`,
 	`CREATE TABLE IF NOT EXISTS terms (
 		politician_id TEXT NOT NULL, congress INTEGER NOT NULL, chamber TEXT, state TEXT, district INTEGER, party TEXT,
 		voting INTEGER, role TEXT, PRIMARY KEY (politician_id, congress))`,
@@ -61,7 +61,7 @@ const COLS = {
 		"status", "term_start", "term_end", "next_election", "website", "contact_form", "phone", "office", "twitter", "twitter_alt",
 		"facebook", "instagram", "youtube", "bluesky", "mastodon", "opensecrets_id", "fec_ids", "govtrack_id",
 		"wikipedia", "ballotpedia", "photo_url", "notes", "lean", "ideology", "lean_note", "phone_label", "offices", "committees",
-		"level", "sdistrict", "email"],
+		"level", "sdistrict", "email", "caucuses"],
 	terms: ["politician_id", "congress", "chamber", "state", "district", "party", "voting", "role"],
 	races: ["chamber", "state", "district", "special", "pvi", "result", "candidates", "winner_id", "exit_polls"],
 	issues: ["id", "name", "description", "rank"],
@@ -111,6 +111,7 @@ const MIGRATIONS = [
 	"ALTER TABLE politicians ADD COLUMN level TEXT",
 	"ALTER TABLE politicians ADD COLUMN sdistrict TEXT",
 	"ALTER TABLE politicians ADD COLUMN email TEXT",
+	"ALTER TABLE politicians ADD COLUMN caucuses TEXT",
 	"CREATE INDEX IF NOT EXISTS idx_pol_level ON politicians (level, state)",
 ];
 
@@ -232,14 +233,18 @@ const badUrl = (row) => URL_FIELDS.find((f) => row[f] != null && !safeUrl(String
 async function bootstrap(db) {
 	const [pols, policies, positions, outlets, apps, meta, terms, issues, polls, kv, mv] = await db.batch([
 		db.prepare(`SELECT p.id, p.name, p.last, p.chamber, p.role, p.state, p.district, p.party, p.voting, p.status,
-			p.term_end, p.next_election, p.photo_url, p.twitter, p.lean, p.ideology, p.phone, p.phone_label,
+			p.term_end, p.next_election, p.photo_url, p.twitter, p.lean, p.ideology, p.phone, p.phone_label, p.caucuses,
 			EXISTS (SELECT 1 FROM json_each(COALESCE(p.committees,'[]')) WHERE json_extract(value,'$.health') = 1) AS health_cmte,
 			json_extract(f.data,'$.health_total') AS health_total,
 			COALESCE(json_extract(f.data,'$.employees.total'),0) AS health_emp,
 			json_extract(f.data,'$.totals.receipts') AS receipts,
 			json_extract(f.data,'$.totals.pacs') AS pacs,
 			COALESCE(json_extract(f.data,'$.outside.support'),0) AS outside_support,
-			COALESCE(json_extract(f.data,'$.outside.oppose'),0) AS outside_oppose
+			COALESCE(json_extract(f.data,'$.outside.oppose'),0) AS outside_oppose,
+			json_extract(f.data,'$.israel.aipac') AS aipac,
+			json_extract(f.data,'$.israel.for') AS israel_for,
+			json_extract(f.data,'$.israel.against') AS israel_against,
+			json_extract(f.data,'$.alignment.level') AS align
 			FROM politicians p LEFT JOIN finance f ON f.politician_id = p.id
 			WHERE COALESCE(p.level, 'federal') != 'state' ORDER BY p.last, p.name`),
 		db.prepare("SELECT * FROM policies ORDER BY is_primary DESC, sort, name"),
@@ -342,7 +347,7 @@ async function admin(req, env, parts) {
 		return json({ ok: true });
 	}
 	if (!["politicians", "policies", "outlets", "appearances", "donors", "issues", "issue_polls"].includes(table)) return fail(404, "Not found");
-	if (table === "politicians") { delete body.lean; delete body.lean_note; delete body.ideology; delete body.offices; delete body.committees; }
+	if (table === "politicians") { delete body.lean; delete body.lean_note; delete body.ideology; delete body.offices; delete body.committees; delete body.caucuses; }
 	const textKey = table === "politicians" || table === "policies" || table === "issues";
 
 	if (method === "POST") {

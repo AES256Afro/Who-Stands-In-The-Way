@@ -2,6 +2,7 @@ import { renderAdmin, adminProfileTools, bindAdmin } from "./admin.js";
 import { shareButtons, bindShare } from "./share.js";
 import { renderMoney, alignmentBox, moneyWeb, votingRecord, bindMoney } from "./money.js";
 import { xSection, bindX } from "./xposts.js";
+import { caucusBadges, aipacBadge, hoverCard, israelSection, matrixBox } from "./badges.js";
 import { renderChanges, profileHistory, recentStrip, bindChanges } from "./changes.js";
 import { renderStates, renderState, bindStates, stateName } from "./states.js";
 import { mapHtml, stateHtml, renderIssues, renderElections, issueMatrix, leanBox, LEAN, bindViews, zipBox, renderZip, bindZip, votesBox, renderVotes, voteScore, drawDistricts } from "./views.js";
@@ -196,7 +197,7 @@ function listHtml() {
 			: p.health_total > 0 ? `${short(p.health_total)} health-industry PACs` : "";
 		return `<button class="row" style="--stance:var(--s-${st})" data-id="${h(p.id)}">
 			${avatar(p)}
-			<span><span class="name">${h(p.name)}</span><br><span class="meta"><span class="party ${h(p.party)}">${h(p.party)}</span> · ${h(seat(p))} · ${h(p.role)}${p.voting ? "" : p.chamber === "house" ? " (non-voting)" : ""}${p.status === "incoming" ? ` · <span class="tag new">New</span>` : ""}${p.status === "departing" ? ` · <span class="tag">Leaving</span>` : ""}${p.lean && p.lean !== "unknown" ? ` · <span class="tag lean" style="--lean:var(--l-${h(p.lean)})">${h(LEAN[p.lean])}</span>` : ""}</span></span>
+			<span><span class="name">${h(p.name)}</span><br><span class="meta"><span class="party ${h(p.party)}">${h(p.party)}</span> · ${h(seat(p))} · ${h(p.role)}${p.voting ? "" : p.chamber === "house" ? " (non-voting)" : ""}${p.status === "incoming" ? ` · <span class="tag new">New</span>` : ""}${p.status === "departing" ? ` · <span class="tag">Leaving</span>` : ""}${p.lean && p.lean !== "unknown" ? ` · <span class="tag lean" style="--lean:var(--l-${h(p.lean)})">${h(LEAN[p.lean])}</span>` : ""}</span>${(() => { const b = caucusBadges(p, { max: 3 }) + aipacBadge(p); return b ? `<br><span class="rtags">${b}</span>` : ""; })()}</span>
 			<span class="right">${pill(st)}<span>${p.next_election ? `Next election ${year(p.next_election)}` : ""}${extra ? " · " + h(extra) : ""}${apps.get(p.id) ? ` · ${apps.get(p.id)} clip${apps.get(p.id) > 1 ? "s" : ""}` : ""}</span></span>
 		</button>`;
 	}).join("");
@@ -345,6 +346,7 @@ async function openProfile(id) {
 			<h3>Super PACs and outside groups <small>${f.outside.count} group${f.outside.count === 1 ? "" : "s"}</small></h3>
 			${f.outside.top.length ? `<table class="t"><tr><th>Group</th><th>Type</th><th class="n">Spent for</th><th class="n">Spent against</th></tr>${f.outside.top.map((x) => `<tr><td><a href="https://www.fec.gov/data/committee/${h(x.id)}/" target="_blank" rel="noopener">${h(x.name)}</a>${x.sector ? ` <span class="tag">${h(SECTOR[x.sector])}</span>` : ""}</td><td>${h(x.type)}</td><td class="n">${x.support ? money(x.support) : "—"}</td><td class="n">${x.oppose ? money(x.oppose) : "—"}</td></tr>`).join("")}</table>
 				<p class="note">Independent expenditures: money spent on ads and mailers about this candidate, not given to them. No contribution limits.</p>` : `<p class="note">No independent expenditures reported for or against this candidate this cycle.</p>`}
+			${israelSection(f)}
 			${(f.leadership || []).map((l) => `<h3>Their leadership PAC <small>${h(l.name)}</small></h3>
 				<div class="kv"><div><b>${money(l.total)}</b><span>From other PACs, 2025–26</span></div><div><b>${money(l.health_total)}</b><span>From health-industry PACs</span></div></div>
 				${l.health.length ? `<table class="t"><tr><th>Health-industry PAC</th><th>Sector</th><th class="n">Given</th></tr>${l.health.map((x) => `<tr><td><a href="https://www.fec.gov/data/committee/${h(x.id)}/" target="_blank" rel="noopener">${h(x.name)}</a></td><td><span class="tag">${h(SECTOR[x.sector] || x.sector)}</span></td><td class="n">${money(x.amount)}</td></tr>`).join("")}</table>` : ""}
@@ -353,7 +355,8 @@ async function openProfile(id) {
 	}
 	dlg.innerHTML = `<div class="dhead">${avatar(p)}
 			<div style="flex:1"><h2>${h(p.name)}</h2><div class="meta"><span class="party ${h(p.party)}">${h(PARTY[p.party] || p.party)}</span> · ${state ? h(seat(p)) : h(p.role) + (p.chamber === "executive" ? "" : " · " + h(seat(p)))}${p.status === "incoming" ? " · new in 2027" : ""}</div>
-				<div class="meta">${p.status === "departing" ? "Leaving Congress January 3, 2027" : `${p.term_end ? `Serving ${p.status === "incoming" || p.chamber === "house" ? "Jan 3, 2027" : "now"} – ${h(fmtDate(p.term_end))}` : ""}${p.next_election ? ` · <b>next election ${h(fmtDate(p.next_election))}</b>` : ""}`}</div></div>
+				<div class="meta">${p.status === "departing" ? "Leaving Congress January 3, 2027" : `${p.term_end ? `Serving ${p.status === "incoming" || p.chamber === "house" ? "Jan 3, 2027" : "now"} – ${h(fmtDate(p.term_end))}` : ""}${p.next_election ? ` · <b>next election ${h(fmtDate(p.next_election))}</b>` : ""}`}</div>
+				${(() => { const b = caucusBadges(S.byId?.get(p.id) || p, { links: true }) + aipacBadge(S.byId?.get(p.id) || p); return b ? `<div class="rtags dtags">${b}</div>` : ""; })()}</div>
 			<div class="links dact">${callBtn(p, "btn primary call")}<button class="btn" data-close aria-label="Close">Close</button></div></div>
 		<div class="dbody">
 			${shareButtons(p.id)}
@@ -368,6 +371,7 @@ async function openProfile(id) {
 			${p.notes ? `<p class="note">${h(p.notes)}</p>` : ""}
 			${leanBox(p)}
 			${alignmentBox(f)}
+			${state ? "" : matrixBox(f)}
 			${state ? `<p class="note">State official · <a href="#/state/${h(p.state)}">All ${h(stateName(p.state))} officials</a></p>` : `${votesBox(p)}
 			<div id="vrec"><h3>Full voting record</h3><p class="note">Loading…</p></div>`}
 			${issueMatrix(p, d.issue_positions || [])}
@@ -481,7 +485,7 @@ function bind() {
 		if (!c) { tip.hidden = true; return; }
 		const p = S.data.politicians.find((x) => x.id === c.dataset.id);
 		if (!p) { tip.hidden = true; return; }
-		tip.innerHTML = `<b>${h(p.name)}</b> (${h(p.party)}-${h(seat(p))})<small>${h(STANCE[stanceOf(p.id)])}${p.lean && p.lean !== "unknown" ? ` · ${h(LEAN[p.lean])}` : ""}${p.health_total > 0 ? ` · ${short(p.health_total)} from health-industry PACs` : ""}</small>`;
+		tip.innerHTML = hoverCard(p);
 		tip.hidden = false;
 		const r = c.getBoundingClientRect();
 		tip.style.left = Math.min(Math.max(r.left + r.width / 2 - tip.offsetWidth / 2, 8), innerWidth - tip.offsetWidth - 8) + "px";

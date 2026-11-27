@@ -127,6 +127,10 @@ for line in open(RAW / "itpas2.txt", encoding="latin-1"):
     f = line.rstrip("\n").split("|")
     if len(f) < 17 or f[5] not in ("24K", "24Z") or not f[16]:
         continue
+    # AIPAC's PAC and NORPAC also report donations they passed on ("EARMARK OF ...") as gifts; those are
+    # individuals' money, counted once from the candidates' own reports (scripts/israel_money.py).
+    if f[0] in ("C00797670", "C00247403") and len(f) > 20 and "EARMARK" in f[20].upper():
+        continue
     pac[f[16]][f[0]] += num(f[14])
 
 # Independent expenditures (outside spending). Keep latest filing per transaction.
@@ -204,6 +208,50 @@ def leadership_for(fec_ids):
     return out
 
 
+# Pro-Israel money. "AIPAC" covers only what the FEC ties to AIPAC by name: the AIPAC PAC's direct gifts,
+# donations individuals routed through the AIPAC PAC (earmarked, scripts/israel_money.py), and its super
+# PAC United Democracy Project's ads. Other pro-Israel PACs are separate organizations and listed by name.
+AIPAC_PAC, UDP = "C00797670", "C00799031"
+PRO_ISRAEL = {
+    "C00247403": "NORPAC", "C00710848": "DMFI PAC (Democratic Majority for Israel)", "C00139659": "JACPAC",
+    "C00345132": "Republican Jewish Coalition PAC", "C00127811": "U.S. Israel PAC (USI PAC)",
+    "C00141747": "Friends of Israel PAC (FIPAC)", "C00687657": "American Pro-Israel PAC",
+    "C00712844": "Defenders of Israel PAC", "C00720128": "Christians for Israel PAC",
+    "C00755991": "Democrats for Israel Orange County", "C00761965": "Democrats for Israel Los Angeles",
+    "C00490649": "U.S. Israel Friendship PAC", "C00922781": "Americans for Israel for America",
+    "C00891259": "Zioness PAC", "C90022864": "Democratic Majority for Israel",
+    "C90019431": "Pro-Israel America", "C90012063": "Republican Jewish Coalition",
+    "C90013244": "Emergency Committee for Israel",
+}
+cand_cmtes = collections.defaultdict(list)
+for line in open(RAW / "ccl.txt", encoding="latin-1"):
+    f = line.rstrip("\n").split("|")
+    if len(f) >= 4 and f[3]:
+        cand_cmtes[f[0]].append(f[3])
+_ia = RAW / "israel_agg.json"
+israel_agg = json.load(open(_ia)) if _ia.exists() else {}
+
+
+def israel_for(fec_ids, gifts, spend):
+    cm_ids = [c for i in fec_ids for c in cand_cmtes.get(i, [])]
+    ear = lambda k: [sum(israel_agg.get(c, {}).get(k, {}).get(x, 0) for c in cm_ids) for x in ("amount", "count")]
+    a_ear, a_cnt = ear("aipac")
+    n_ear, n_cnt = ear("norpac")
+    udp = spend.get(UDP, {})
+    aipac = {"direct": round(gifts.get(AIPAC_PAC, 0), 2), "earmarked": round(a_ear, 2), "earmarked_count": a_cnt,
+             "udp_support": round(udp.get("support", 0), 2), "udp_oppose": round(udp.get("oppose", 0), 2)}
+    others = [{"id": c, "name": PRO_ISRAEL[c], "amount": round(a, 2)} for c, a in gifts.items() if c in PRO_ISRAEL and a > 0]
+    if n_ear > 0:
+        others.append({"id": "C00247403", "name": "NORPAC (donations routed through it)", "amount": round(n_ear, 2), "earmarked": True})
+    others.sort(key=lambda x: -x["amount"])
+    oside = [{"id": t["id"], "name": PRO_ISRAEL[t["id"]], "support": t["support"], "oppose": t["oppose"]}
+             for t in spend.values() if t["id"] in PRO_ISRAEL]
+    out = {"aipac": aipac, "other": others, "other_outside": oside,
+           "for": round(aipac["direct"] + a_ear + aipac["udp_support"] + sum(x["amount"] for x in others) + sum(x["support"] for x in oside), 2),
+           "against": round(aipac["udp_oppose"] + sum(x["oppose"] for x in oside), 2)}
+    return out if out["for"] or out["against"] else None
+
+
 def finance_for(fec_ids, opensecrets):
     rows = [weball[i] for i in fec_ids if i in weball]
     rows = [r for r in rows if num(r["TTL_RECEIPTS"]) or num(r["TTL_DISB"]) or num(r["COH_COP"])]
@@ -256,6 +304,9 @@ def finance_for(fec_ids, opensecrets):
     out["outside"] = {"support": round(sum(t["support"] for t in sp), 2),
                       "oppose": round(sum(t["oppose"] for t in sp), 2),
                       "count": len(sp), "top": sp[:12]}
+    isr = israel_for(fec_ids, gifts, spend)
+    if isr:
+        out["israel"] = isr
     out["leadership"] = leadership_for(fec_ids)
     out["employees"] = employees_for([c for i in fec_ids for c in cmtes_of_cand.get(i, [])])
     return out
@@ -649,6 +700,92 @@ for pid_, r_ in rec.items():
     d["alignment"] = {"level": level, "anti": r_["anti"], "cast": cast_, "money": round(money_), "pct": pc, "chamber": ch}
 print("alignment", collections.Counter(d["alignment"]["level"] for d in fin_by.values() if "alignment" in d))
 
+# ---------------------------------------------------------------- money vs. votes, by donor group
+# For each donor group: the member's money from it (percentile within their chamber) next to how they voted
+# on roll calls the group publicly lobbied on (scripts/sector_votes.json, each with a source for the group's
+# side). Same rule as above: a correlation, never presented as motive.
+sector_votes = []
+_sv = ROOT / "scripts" / "sector_votes.json"
+if _sv.exists() and (_vv / "HS119_votes.csv").exists():
+    sector_votes = json.load(open(_sv, encoding="utf-8"))
+    want = {("Senate" if v["chamber"] == "senate" else "House", str(v["rollnumber"])): v for v in sector_votes}
+    svotes = collections.defaultdict(dict)  # bioguide -> vote id -> yea/nay/...
+    with open(_vv / "HS119_votes.csv", encoding="utf-8", newline="") as fh:
+        for row in csv.DictReader(fh):
+            v = want.get((row["chamber"], row["rollnumber"]))
+            if not v:
+                continue
+            bio = icpsr_bio.get((row["chamber"], row["icpsr"]))
+            if bio:
+                code = int(float(row["cast_code"]))
+                svotes[bio][v["id"]] = "yea" if code in (1, 2, 3) else "nay" if code in (4, 5, 6) else "present" if code == 7 else "not_voting"
+    GROUP_PAC = {"pharma": "pharma", "insurers": "insurance", "hospitals": "hospitals"}
+
+    def group_money(d, g):
+        if g == "pro_israel":
+            return d.get("israel", {}).get("for", 0)
+        k = GROUP_PAC[g]
+        lead = sum(l.get("health_sectors", {}).get(k, 0) for l in d.get("leadership", []))
+        emp = d.get("employees", {}).get("sectors", {}).get(k, 0) if g != "hospitals" else 0
+        return d.get("health_sectors", {}).get(k, 0) + lead + emp
+
+    groups = [g for g in ("pharma", "insurers", "hospitals", "pro_israel") if any(v["sector"] == g for v in sector_votes)]
+    want_side = {v["id"]: v["industry_side"] for v in sector_votes}
+    chamber_by = {p["id"]: p["chamber"] for p in politicians if p["chamber"] in ("house", "senate")}
+    gpools = collections.defaultdict(list)
+    for pid_, d in fin_by.items():
+        if pid_ in chamber_by:
+            for g in groups:
+                gpools[(chamber_by[pid_], g)].append(group_money(d, g))
+    for k in gpools:
+        gpools[k].sort()
+    for pid_, d in fin_by.items():
+        ch = chamber_by.get(pid_)
+        if not ch:
+            continue
+        rows = []
+        for g in groups:
+            mv = [(v["id"], svotes.get(pid_, {}).get(v["id"])) for v in sector_votes if v["sector"] == g]
+            mv = [(i, x) for i, x in mv if x]
+            cast_ = [(i, x) for i, x in mv if x in ("yea", "nay")]
+            with_ = sum(1 for i, x in cast_ if x == want_side[i])
+            m_ = group_money(d, g)
+            pool = gpools[(ch, g)]
+            pc = round(100 * sum(1 for v in pool if v < m_) / len(pool)) if pool and m_ > 0 else 0
+            if len(cast_) < 2:  # one vote is too little to rate
+                level = "none"
+            elif m_ <= 0 or with_ / len(cast_) <= 0.5:  # needs a real majority
+                level = "low"
+            else:
+                level = "very_high" if pc >= 90 else "high" if pc >= 75 else "moderate" if pc >= 50 else "low"
+            if m_ > 0 or mv:
+                rows.append({"sector": g, "money": round(m_), "pct": pc, "with": with_, "cast": len(cast_), "level": level,
+                             "chamber": ch, "votes": mv})
+        if rows:
+            d["matrix"] = rows
+    print("matrix levels", {g: collections.Counter(r["level"] for d in fin_by.values() for r in d.get("matrix", []) if r["sector"] == g) for g in groups})
+
+# ---------------------------------------------------------------- caucuses
+CAUCUS_KEYS = ("m4a", "cpc", "dsa", "cbc", "chc", "capac", "newdem", "bluedog", "problemsolvers", "rsc", "freedom")
+_cf = RAW / "research" / "caucuses.json"
+if _cf.exists():
+    _cj = json.load(open(_cf, encoding="utf-8"))["caucuses"]
+    by_bio = collections.defaultdict(list)
+    for k in CAUCUS_KEYS:
+        c = _cj.get(k)
+        if not c:
+            continue
+        for m in c["members"]:
+            mid = m.get("bioguide") or m.get("politician_id")
+            if mid and not any(x["k"] == k for x in by_bio[mid]):
+                by_bio[mid].append({k2: v for k2, v in {"k": k, "role": m.get("role") or "", "basis": m.get("basis") or "",
+                                                                  "src": m.get("source_url") or c.get("source_url") or ""}.items() if v})
+    for p in politicians:
+        if by_bio.get(p["id"]):
+            p["caucuses"] = json.dumps(by_bio[p["id"]], separators=(",", ":"))
+    print("caucus members", {k: sum(1 for v in by_bio.values() if any(x["k"] == k for x in v)) for k in CAUCUS_KEYS},
+          "people with a caucus on the site", sum(1 for p in politicians if p.get("caucuses")))
+
 # ---------------------------------------------------------------- issues + polling
 issues, issue_polls = [], []
 f = RAW / "research" / "issues.json"
@@ -719,6 +856,8 @@ meta = {"congresses": [{"id": 120, "label": "120th Congress (from Jan 3, 2027)"}
         "exit_national": exit_polls["national"],
         "results_source": "https://en.wikipedia.org/wiki/2026_United_States_House_of_Representatives_elections",
         "congress": "120th", "sworn_in": "2027-01-03", "undecided": undecided,
+        "sector_votes": {v["id"]: {k: v.get(k) for k in ("chamber", "date", "title", "industry_side", "industry_position", "industry_source_url", "source_url", "sector")}
+                         for v in sector_votes},
         "roster_source": f"https://en.wikipedia.org/w/index.php?title=120th_United_States_Congress&oldid={ROSTER_REV}"}
 seed = {"version": f"120b-{TODAY}-{len(positions)}-{len(issues)}-{len(exit_polls['national'])}-{len(exit_polls['senate'])}",
         "terms": terms, "races": races, "key_votes": key_votes, "member_votes": member_votes, "issues": issues, "issue_polls": issue_polls, "meta": meta, "generated": TODAY, "politicians": politicians, "positions": positions, "policies": policies,
