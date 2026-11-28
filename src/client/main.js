@@ -74,11 +74,21 @@ export function toast(msg, err) {
 	toast.t = setTimeout(() => (t.hidden = true), 2600);
 }
 
+// Site-wide text size (admin: Site look). styles.css multiplies every font size by --ts-all, and sizes
+// under 14px also by --ts-small.
+export function applyTextScale(t) {
+	const root = document.documentElement.style;
+	root.setProperty("--ts-all", String(t?.all || 1));
+	root.setProperty("--ts-small", String(t?.small || 1));
+	try { localStorage.setItem("wsitw-ts", JSON.stringify(t || {})); } catch {}
+}
+
 export async function load() {
 	const [data, me] = await Promise.all([api("bootstrap"), api("me")]);
 	data.all = data.politicians.filter((p) => p.status !== "former");
 	S.byId = new Map(data.all.map((p) => [p.id, p]));
 	S.data = data;
+	applyTextScale(data.text_scale);
 	S.congress ??= data.meta?.default_congress || 120;
 	applyCongress();
 	S.admin = me.admin;
@@ -555,6 +565,8 @@ function route() {
 export const markDirty = () => (route.dirty = true);
 export const rerender = () => { markDirty(); route(); };
 
+const cardImgs = new Map(); // share card images already requested for the picture-card hover
+
 function bind() {
 	const tip = $("#tip");
 	document.addEventListener("click", async (e) => {
@@ -593,28 +605,41 @@ function bind() {
 	});
 	document.addEventListener("mouseover", (e) => {
 		const c = e.target.closest?.(".hemi circle, .seatdot[data-id], path.dist[data-id]");
-		if (!c) { tip.hidden = true; return; }
+		if (!c) { tip.hidden = true; delete tip.dataset.id; return; }
 		const p = S.data.politicians.find((x) => x.id === c.dataset.id);
-		if (!p) { tip.hidden = true; return; }
-		tip.innerHTML = hoverCard(p);
-		tip.hidden = false;
-		tip.classList.remove("tip-pic");
+		if (!p) { tip.hidden = true; delete tip.dataset.id; return; }
 		const r = c.getBoundingClientRect();
-		// "Picture card" hover (admin: Site look): show the share card image once it has loaded; the text card fills the wait.
-		if (S.data.hover === "card") {
-			const img = new Image(), id = p.id;
-			img.alt = `${p.name}: share card`; img.width = 420; img.height = 221;
-			img.onload = () => {
-				if (tip.hidden || tip.dataset.id !== id) return;
-				tip.innerHTML = ""; tip.append(img); tip.classList.add("tip-pic");
-				tip.style.left = Math.min(Math.max(r.left + r.width / 2 - tip.offsetWidth / 2, 8), innerWidth - tip.offsetWidth - 8) + "px";
-				tip.style.top = (r.top - tip.offsetHeight - 8 < 0 ? r.bottom + 8 : r.top - tip.offsetHeight - 8) + "px";
-			};
-			img.src = `/m/${encodeURIComponent(id)}.png`;
-		}
+		const place = () => {
+			tip.style.left = Math.min(Math.max(r.left + r.width / 2 - tip.offsetWidth / 2, 8), innerWidth - tip.offsetWidth - 8) + "px";
+			tip.style.top = (r.top - tip.offsetHeight - 8 < 0 ? r.bottom + 8 : r.top - tip.offsetHeight - 8) + "px";
+		};
+		if (tip.dataset.id === p.id && !tip.hidden) return;
 		tip.dataset.id = p.id;
-		tip.style.left = Math.min(Math.max(r.left + r.width / 2 - tip.offsetWidth / 2, 8), innerWidth - tip.offsetWidth - 8) + "px";
-		tip.style.top = (r.top - tip.offsetHeight - 8 < 0 ? r.bottom + 8 : r.top - tip.offsetHeight - 8) + "px";
+		tip.hidden = false;
+		if (S.data.hover !== "card") {
+			// Text card (admin: Site look → Hover card).
+			tip.classList.remove("tip-pic");
+			tip.innerHTML = hoverCard(p);
+			return place();
+		}
+		// Picture card: the share card image. Until it loads, a blank card-sized placeholder with the name;
+		// images already seen are kept, so a second hover is instant.
+		tip.classList.add("tip-pic");
+		const cached = cardImgs.get(p.id);
+		if (cached?.complete && cached.naturalWidth) {
+			tip.replaceChildren(cached);
+			return place();
+		}
+		tip.innerHTML = `<div class="tip-wait"><b>${h(p.name)}</b><span>${h(p.party)}-${h(seat(p))}</span></div>`;
+		place();
+		const img = cached || new Image();
+		if (!cached) {
+			img.alt = `${p.name}: share card`; img.width = 420; img.height = 221;
+			img.src = `/m/${encodeURIComponent(p.id)}.png`;
+			cardImgs.set(p.id, img);
+		}
+		img.addEventListener("load", () => { if (!tip.hidden && tip.dataset.id === p.id) { tip.replaceChildren(img); place(); } }, { once: true });
+		img.addEventListener("error", () => { cardImgs.delete(p.id); if (!tip.hidden && tip.dataset.id === p.id) { tip.classList.remove("tip-pic"); tip.innerHTML = hoverCard(p); place(); } }, { once: true });
 	});
 	// Going back to a /p/<id> entry may fire popstate, hashchange or both; route once per address.
 	const nav = () => { if (location.href !== route.url) route(); };

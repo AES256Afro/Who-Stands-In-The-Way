@@ -268,7 +268,7 @@ const MONEY_FIELDS = ["totals.receipts", "totals.pacs", "health_total", "employe
 	"israel.career.for", "israel.career.vs_opponents", "israel.career.against", "israel.trackaipac.total"];
 
 async function bootstrap(db) {
-	const [pols, policies, positions, outlets, apps, meta, logo, hover, terms, issues, polls, kv, mv] = await db.batch([
+	const [pols, policies, positions, outlets, apps, meta, logo, hover, textScale, terms, issues, polls, kv, mv] = await db.batch([
 		db.prepare(`SELECT p.id, p.name, p.last, p.chamber, p.role, p.state, p.district, p.party, p.voting, p.status,
 			p.term_end, p.next_election, p.photo_url, p.twitter, p.lean, p.ideology, p.phone, p.phone_label, p.caucuses,
 			EXISTS (SELECT 1 FROM json_each(COALESCE(p.committees,'[]')) WHERE json_extract(value,'$.health') = 1) AS health_cmte,
@@ -296,13 +296,14 @@ async function bootstrap(db) {
 		db.prepare("SELECT value FROM meta WHERE key = 'seed_meta'"),
 		db.prepare("SELECT value FROM meta WHERE key = 'logo'"),
 		db.prepare("SELECT value FROM meta WHERE key = 'hover'"),
+		db.prepare("SELECT value FROM meta WHERE key = 'text_scale'"),
 		db.prepare("SELECT * FROM terms"),
 		db.prepare("SELECT * FROM issues ORDER BY rank, name"),
 		db.prepare("SELECT * FROM issue_polls ORDER BY date DESC"),
 		db.prepare("SELECT * FROM key_votes ORDER BY date, sort"),
 		db.prepare("SELECT vote_id, politician_id, vote FROM member_votes"),
 	]);
-	return { meta: JSON.parse(meta.results[0]?.value || "{}"), logo: logo.results[0]?.value || "A", hover: hover.results[0]?.value || "card", terms: terms.results, issues: issues.results,
+	return { meta: JSON.parse(meta.results[0]?.value || "{}"), logo: logo.results[0]?.value || "A", hover: hover.results[0]?.value || "card", text_scale: JSON.parse(textScale.results[0]?.value || "{}"), terms: terms.results, issues: issues.results,
 		issue_polls: polls.results, scale: SCALE,
 		key_votes: kv.results.map((v) => ({ ...v, tally: JSON.parse(v.tally || "{}") })),
 		member_votes: mv.results.map((m) => [m.vote_id, m.politician_id, m.vote]), politicians: pols.results, policies: policies.results, positions: positions.results,
@@ -374,6 +375,13 @@ async function admin(req, env, parts) {
 		await db.batch([db.prepare(`INSERT INTO agenda (politician_id, data, source, updated_at) VALUES (?,?,'admin',?)
 			ON CONFLICT (politician_id) DO UPDATE SET data = excluded.data, source = 'admin', updated_at = excluded.updated_at`).bind(id, JSON.stringify(data), new Date().toISOString().slice(0, 10)),
 			change(db, { politician_id: id, kind: "evidence", field: "agenda", note: "Agenda edited" })]);
+		return json({ ok: true });
+	}
+	if (table === "text_scale" && method === "PUT") {
+		const all = Number(body.all), small = Number(body.small);
+		if (!(all >= 0.8 && all <= 1.6) || !(small >= 1 && small <= 1.6)) return fail(400, "Text size out of range");
+		await db.prepare("INSERT INTO meta (key, value) VALUES ('text_scale', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value")
+			.bind(JSON.stringify({ all: Math.round(all * 100) / 100, small: Math.round(small * 100) / 100 })).run();
 		return json({ ok: true });
 	}
 	if (table === "hover" && method === "PUT") {

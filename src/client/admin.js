@@ -1,4 +1,4 @@
-import { S, STANCE, STANCE_ORDER, SIGNAL, KIND, h, api, toast, refresh, markDirty, chrome, seat, stanceOf, pill, appHtml, avatar, money } from "./main.js";
+import { S, STANCE, STANCE_ORDER, SIGNAL, KIND, h, api, toast, refresh, markDirty, chrome, seat, stanceOf, pill, appHtml, avatar, money, applyTextScale } from "./main.js";
 
 const $ = (s, el = document) => el.querySelector(s);
 const opt = (v, l, cur) => `<option value="${h(v)}"${String(cur ?? "") === String(v) ? " selected" : ""}>${h(l)}</option>`;
@@ -177,10 +177,17 @@ export function renderAdmin() {
 					<img src="/logo/${k}.svg" width="96" height="96" alt=""><span><b>${k}${k === cur ? " · in use" : ""}</b><br><small>${h(l)}</small></span></label>`).join("")}</div>
 			<div class="actions"><button type="button" class="btn primary" data-logo-apply>Use this logo</button></div>
 			<h3>Hover card</h3><p class="note">What shows when you point at a seat on the dashboard charts and maps.</p>
-			<div class="logo-pick">${[["text", "Text card", "Stance, caucuses and money lines; shows instantly"], ["card", "Picture card", "The same image as a shared link: photo, stance banner, money. The text card shows for a moment while it loads."]].map(([k, l, dsc]) => `
+			<div class="logo-pick">${[["text", "Text card", "Stance, caucuses and money lines; shows instantly"], ["card", "Picture card", "The same image as a shared link: photo, stance banner, money. A plain card with the name shows for a moment the first time it loads."]].map(([k, l, dsc]) => `
 				<label class="logo-opt${k === (d.hover || "card") ? " on" : ""}"><input type="radio" name="hover" value="${k}"${k === (d.hover || "card") ? " checked" : ""}>
 					<span><b>${h(l)}${k === (d.hover || "card") ? " · in use" : ""}</b><br><small>${h(dsc)}</small></span></label>`).join("")}</div>
-			<div class="actions"><button type="button" class="btn primary" data-hover-apply>Use this hover card</button></div>`;
+			<div class="actions"><button type="button" class="btn primary" data-hover-apply>Use this hover card</button></div>
+			<h3>Text size</h3><p class="note">Changes the text on every page for every visitor. Drag to preview here; save to apply.</p>
+			<div class="ts-controls">
+				<label>All text <input type="range" id="ts-all" min="0.9" max="1.4" step="0.05" value="${h(d.text_scale?.all || 1)}"> <b id="ts-all-v">${Math.round((d.text_scale?.all || 1) * 100)}%</b></label>
+				<label>Small print (notes, captions, labels) <input type="range" id="ts-small" min="1" max="1.5" step="0.05" value="${h(d.text_scale?.small || 1)}"> <b id="ts-small-v">${Math.round((d.text_scale?.small || 1) * 100)}%</b></label>
+			</div>
+			<p class="note" style="margin-top:8px">This line is small print, at the size visitors will see it.</p>
+			<div class="actions"><button type="button" class="btn primary" data-ts-save>Save text size</button><button type="button" class="btn" data-ts-reset>Back to normal</button></div>`;
 	} else if (tab === "photomoney") {
 		body = `<div class="filters" style="position:static"><input type="search" id="pmpick" list="pols" placeholder="Start typing a name…" autocomplete="off" value="${h(S.pmPick || "")}"></div>
 			<div id="pmbox"><p class="note">Pick a person to change their photo, campaign money or super PAC money.</p></div>`;
@@ -281,6 +288,14 @@ export function bindAdmin() {
 		const tab = e.target.closest("[data-tab]");
 		if (tab && tab.dataset.tab === "issues") { location.hash = "#/issues"; return; }
 		if (tab) { S.adminTab = tab.dataset.tab; renderAdmin(); return; }
+		if (e.target.closest("[data-ts-save]")) {
+			const all = Number($("#ts-all").value), small = Number($("#ts-small").value);
+			return save(() => api("admin/text_scale", { method: "PUT", body: { all, small } }), "Text size saved");
+		}
+		if (e.target.closest("[data-ts-reset]")) {
+			$("#ts-all").value = 1; $("#ts-small").value = 1; applyTextScale({ all: 1, small: 1 });
+			return save(() => api("admin/text_scale", { method: "PUT", body: { all: 1, small: 1 } }), "Text size back to normal");
+		}
 		if (e.target.closest("[data-hover-apply]")) {
 			const choice = document.querySelector('input[name="hover"]:checked')?.value;
 			return save(() => api("admin/hover", { method: "PUT", body: { choice } }), "Hover card saved");
@@ -330,6 +345,12 @@ export function bindAdmin() {
 		if (t.id === "policy" && location.hash.startsWith("#/admin")) renderAdmin();
 	});
 	document.addEventListener("input", (e) => {
+		if (e.target.id === "ts-all" || e.target.id === "ts-small") {
+			const all = Number($("#ts-all").value), small = Number($("#ts-small").value);
+			$("#ts-all-v").textContent = Math.round(all * 100) + "%"; $("#ts-small-v").textContent = Math.round(small * 100) + "%";
+			applyTextScale({ all, small });
+			return;
+		}
 		if (e.target.id === "sq") { S.sq = e.target.value; $("#squick").innerHTML = stanceRows(); }
 	});
 }
