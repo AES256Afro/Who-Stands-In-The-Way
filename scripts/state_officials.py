@@ -156,7 +156,11 @@ for g in load("governors*.json"):
     conf = "low" if re.match(r"^https?://(?:www\.)?(?:ontheissues\.org|en\.wikipedia\.org|isidewith\.com)/", g["source_url"]) else g.get("confidence")
     stance, note = g["stance"], (g.get("note") or "").strip()
     if stance == "supports" and conf == "low":  # thin evidence doesn't count as support
-        stance, note = "unclear", "Reported as a supporter, but not confirmed in their own words: " + note
+        # A bill cosponsorship is the person's own act, so a low-confidence one is old support rather than hearsay.
+        own_act = re.search(r"co-?sponsor(?:ed|s)?\b[^.;]*?\b(?:H\.\s?R\.|S\.)\s?\d+", note, re.I) or \
+            re.match(r"^https?://(?:www\.)?(?:govinfo\.gov/bulkdata/BILLSTATUS/|congress\.gov/bill/)", g["source_url"], re.I)
+        prefix = "Past support, not repeated since: " if own_act else "Reported as a supporter, but not confirmed in their own words: "
+        stance, note = "unclear", prefix + note
     low = " Low confidence: verify before citing." if conf == "low" else ""
     for m in match:
         positions.append({"politician_id": m["id"], "policy_id": "m4a", "stance": stance,

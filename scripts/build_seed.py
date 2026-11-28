@@ -420,6 +420,15 @@ def contact(bio, name, has_phone):
 
 # Sources that often summarize or infer positions (e.g. from interest-group scores) rather than quote the person.
 WEAK_SOURCES = re.compile(r"^https?://(?:www\.)?(?:ontheissues\.org|en\.wikipedia\.org|isidewith\.com)/", re.I)
+# A bill cosponsorship is the person's own act, so a low-confidence one is old support rather than hearsay.
+COSPONSOR_NOTE = re.compile(r"co-?sponsor(?:ed|s)?\b[^.;]*?\b(?:H\.\s?R\.|S\.)\s?\d+", re.I)
+BILL_RECORD = re.compile(r"^https?://(?:www\.)?(?:govinfo\.gov/bulkdata/BILLSTATUS/|congress\.gov/bill/)", re.I)
+
+
+def low_support_prefix(note, source_url):
+    if COSPONSOR_NOTE.search(note) or BILL_RECORD.match(source_url):
+        return "Past support, not repeated since: "
+    return "Reported as a supporter, but not confirmed in their own words: "
 
 
 def researched(pid, rs):
@@ -427,7 +436,7 @@ def researched(pid, rs):
         conf = "low" if WEAK_SOURCES.match(rs["source_url"]) else rs.get("confidence")
         stance, note = rs["stance"], (rs.get("note") or "").strip()
         if stance == "supports" and conf == "low":  # don't let thin evidence inflate the supporter count
-            stance, note = "unclear", "Reported as a supporter, but not confirmed in their own words: " + note
+            stance, note = "unclear", low_support_prefix(note, rs["source_url"]) + note
         low = " Low confidence: verify before citing." if conf == "low" else ""
         return {"politician_id": pid, "policy_id": "m4a", "stance": stance,
                 "note": "Researched Nov 2026: " + note + low,
