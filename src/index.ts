@@ -268,7 +268,7 @@ const MONEY_FIELDS = ["totals.receipts", "totals.pacs", "health_total", "employe
 	"israel.career.for", "israel.career.vs_opponents", "israel.career.against", "israel.trackaipac.total"];
 
 async function bootstrap(db) {
-	const [pols, policies, positions, outlets, apps, meta, logo, terms, issues, polls, kv, mv] = await db.batch([
+	const [pols, policies, positions, outlets, apps, meta, logo, hover, terms, issues, polls, kv, mv] = await db.batch([
 		db.prepare(`SELECT p.id, p.name, p.last, p.chamber, p.role, p.state, p.district, p.party, p.voting, p.status,
 			p.term_end, p.next_election, p.photo_url, p.twitter, p.lean, p.ideology, p.phone, p.phone_label, p.caucuses,
 			EXISTS (SELECT 1 FROM json_each(COALESCE(p.committees,'[]')) WHERE json_extract(value,'$.health') = 1) AS health_cmte,
@@ -295,13 +295,14 @@ async function bootstrap(db) {
 			FROM appearances a LEFT JOIN outlets o ON o.id = a.outlet_id ORDER BY a.date DESC, a.id DESC LIMIT 500`),
 		db.prepare("SELECT value FROM meta WHERE key = 'seed_meta'"),
 		db.prepare("SELECT value FROM meta WHERE key = 'logo'"),
+		db.prepare("SELECT value FROM meta WHERE key = 'hover'"),
 		db.prepare("SELECT * FROM terms"),
 		db.prepare("SELECT * FROM issues ORDER BY rank, name"),
 		db.prepare("SELECT * FROM issue_polls ORDER BY date DESC"),
 		db.prepare("SELECT * FROM key_votes ORDER BY date, sort"),
 		db.prepare("SELECT vote_id, politician_id, vote FROM member_votes"),
 	]);
-	return { meta: JSON.parse(meta.results[0]?.value || "{}"), logo: logo.results[0]?.value || "A", terms: terms.results, issues: issues.results,
+	return { meta: JSON.parse(meta.results[0]?.value || "{}"), logo: logo.results[0]?.value || "A", hover: hover.results[0]?.value || "card", terms: terms.results, issues: issues.results,
 		issue_polls: polls.results, scale: SCALE,
 		key_votes: kv.results.map((v) => ({ ...v, tally: JSON.parse(v.tally || "{}") })),
 		member_votes: mv.results.map((m) => [m.vote_id, m.politician_id, m.vote]), politicians: pols.results, policies: policies.results, positions: positions.results,
@@ -373,6 +374,11 @@ async function admin(req, env, parts) {
 		await db.batch([db.prepare(`INSERT INTO agenda (politician_id, data, source, updated_at) VALUES (?,?,'admin',?)
 			ON CONFLICT (politician_id) DO UPDATE SET data = excluded.data, source = 'admin', updated_at = excluded.updated_at`).bind(id, JSON.stringify(data), new Date().toISOString().slice(0, 10)),
 			change(db, { politician_id: id, kind: "evidence", field: "agenda", note: "Agenda edited" })]);
+		return json({ ok: true });
+	}
+	if (table === "hover" && method === "PUT") {
+		if (!["text", "card"].includes(body.choice)) return fail(400, "Pick text or card");
+		await db.prepare("INSERT INTO meta (key, value) VALUES ('hover', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").bind(body.choice).run();
 		return json({ ok: true });
 	}
 	if (table === "logo" && method === "PUT") {
@@ -614,7 +620,7 @@ async function cardImage(req, env, ctx, id) {
 	}
 	const { renderCard } = await import("./og/card.js");
 	const png = await renderCard(p, new URL(req.url).host);
-	const res = new Response(png, { headers: { "content-type": "image/png", "cache-control": "public, max-age=86400" } });
+	const res = new Response(png, { headers: { "content-type": "image/png", "cache-control": new URL(req.url).searchParams.has("v") ? "public, max-age=86400" : "public, max-age=600" } });
 	ctx.waitUntil(cache.put(key, res.clone()));
 	return res;
 }

@@ -394,3 +394,5 @@ textarea[name="data"] { width: 100%; font: 12px/1.4 ui-monospace, monospace; }
 .logo-opt.on, .logo-opt:has(input:checked) { border-color: var(--ink); }
 .logo-opt img { border-radius: 16px; }
 .logo-opt small { color: var(--ink-2); }
+.tip.tip-pic { padding: 0; overflow: hidden; width: auto; max-width: none; }
+.tip.tip-pic img { display: block; width: 420px; height: auto; }

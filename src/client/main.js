@@ -337,6 +337,10 @@ async function openProfile(id) {
 	const dlg = $("#drawer");
 	let d;
 	try { d = await api("politicians/" + encodeURIComponent(id)); } catch (e) { toast(e.message, true); location.hash = "#/"; return; }
+	// Closing replays stale history events that can start a reload of this profile; open it only if the
+	// address still points at this person.
+	const wanted = () => { const m = curHash().match(/^#\/p\/(.+)$/); return m && decodeURIComponent(m[1]) === id; };
+	if (!wanted()) return;
 	document.title = `${d.politician.name} | Who Stands In The Way`;
 	const p = d.politician, f = d.finance;
 	const pos = Object.fromEntries(d.positions.map((x) => [x.policy_id, x]));
@@ -450,6 +454,7 @@ async function openProfile(id) {
 	if (!state) votingRecord(dlg.querySelector("#vrec"), p);
 	moneyWeb(dlg.querySelector("#pwebwrap"), p, f);
 	profileHistory(dlg.querySelector("#phist"), p.id);
+	if (!wanted()) return;
 	if (!dlg.open) dlg.showModal();
 	dlg.scrollTop = dlg.dataset.keep === p.id ? Number(dlg.dataset.scroll || 0) : 0;
 	delete dlg.dataset.keep;
@@ -564,7 +569,14 @@ function bind() {
 		if (el && !t.closest("form")) location.hash = "#/p/" + encodeURIComponent(el.dataset.id);
 	});
 	$("#drawer").addEventListener("close", () => { if (curHash().startsWith("#/p/")) location.hash = route.back || "#/"; });
-	$("#drawer").addEventListener("click", (e) => { if (e.target === e.currentTarget) location.hash = route.back || "#/"; });
+	// A click on the dimmed page outside the panel lands on the dialog itself (its backdrop): close it.
+	$("#drawer").addEventListener("click", (e) => {
+		if (e.target !== e.currentTarget) return;
+		const r = e.currentTarget.getBoundingClientRect();
+		if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) return;
+		e.currentTarget.close();
+		location.hash = route.back || "#/";
+	});
 	document.addEventListener("input", (e) => {
 		const t = e.target;
 		if (t.id === "q" && $("#list")) { S.f.q = t.value; $("#list").innerHTML = listHtml(); }
@@ -584,7 +596,21 @@ function bind() {
 		if (!p) { tip.hidden = true; return; }
 		tip.innerHTML = hoverCard(p);
 		tip.hidden = false;
+		tip.classList.remove("tip-pic");
 		const r = c.getBoundingClientRect();
+		// "Picture card" hover (admin: Site look): show the share card image once it has loaded; the text card fills the wait.
+		if (S.data.hover === "card") {
+			const img = new Image(), id = p.id;
+			img.alt = `${p.name}: share card`; img.width = 420; img.height = 221;
+			img.onload = () => {
+				if (tip.hidden || tip.dataset.id !== id) return;
+				tip.innerHTML = ""; tip.append(img); tip.classList.add("tip-pic");
+				tip.style.left = Math.min(Math.max(r.left + r.width / 2 - tip.offsetWidth / 2, 8), innerWidth - tip.offsetWidth - 8) + "px";
+				tip.style.top = (r.top - tip.offsetHeight - 8 < 0 ? r.bottom + 8 : r.top - tip.offsetHeight - 8) + "px";
+			};
+			img.src = `/m/${encodeURIComponent(id)}.png`;
+		}
+		tip.dataset.id = p.id;
 		tip.style.left = Math.min(Math.max(r.left + r.width / 2 - tip.offsetWidth / 2, 8), innerWidth - tip.offsetWidth - 8) + "px";
 		tip.style.top = (r.top - tip.offsetHeight - 8 < 0 ? r.bottom + 8 : r.top - tip.offsetHeight - 8) + "px";
 	});

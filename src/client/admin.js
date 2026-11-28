@@ -155,7 +155,7 @@ export function renderAdmin() {
 		return;
 	}
 	const d = S.data, tab = S.adminTab;
-	const tabs = [["appearance", "Log an entry"], ["stances", "Stances"], ["issues", "Issues & polls"], ["outlets", "Outlets"], ["policies", "Policies"], ["photomoney", "Photo & money"], ["logo", "Site logo"], ["people", "Add a person"]];
+	const tabs = [["appearance", "Log an entry"], ["stances", "Stances"], ["issues", "Issues & polls"], ["outlets", "Outlets"], ["policies", "Policies"], ["photomoney", "Photo & money"], ["logo", "Site look"], ["people", "Add a person"]];
 	let body = "";
 	if (tab === "appearance") {
 		body = `<form class="form" data-form="appearance">${appearanceFields(null)}<div class="actions"><button class="btn primary">Save appearance</button></div></form>
@@ -175,7 +175,12 @@ export function renderAdmin() {
 			<div class="logo-pick">${[["A", "W monogram"], ["D", "Capitol, blocked"], ["E", "Stacked wordmark (tabs and bookmarks use A's W, too small to read)"]].map(([k, l]) => `
 				<label class="logo-opt${k === cur ? " on" : ""}"><input type="radio" name="logo" value="${k}"${k === cur ? " checked" : ""}>
 					<img src="/logo/${k}.svg" width="96" height="96" alt=""><span><b>${k}${k === cur ? " · in use" : ""}</b><br><small>${h(l)}</small></span></label>`).join("")}</div>
-			<div class="actions"><button type="button" class="btn primary" data-logo-apply>Use this logo</button></div>`;
+			<div class="actions"><button type="button" class="btn primary" data-logo-apply>Use this logo</button></div>
+			<h3>Hover card</h3><p class="note">What shows when you point at a seat on the dashboard charts and maps.</p>
+			<div class="logo-pick">${[["text", "Text card", "Stance, caucuses and money lines; shows instantly"], ["card", "Picture card", "The same image as a shared link: photo, stance banner, money. The text card shows for a moment while it loads."]].map(([k, l, dsc]) => `
+				<label class="logo-opt${k === (d.hover || "card") ? " on" : ""}"><input type="radio" name="hover" value="${k}"${k === (d.hover || "card") ? " checked" : ""}>
+					<span><b>${h(l)}${k === (d.hover || "card") ? " · in use" : ""}</b><br><small>${h(dsc)}</small></span></label>`).join("")}</div>
+			<div class="actions"><button type="button" class="btn primary" data-hover-apply>Use this hover card</button></div>`;
 	} else if (tab === "photomoney") {
 		body = `<div class="filters" style="position:static"><input type="search" id="pmpick" list="pols" placeholder="Start typing a name…" autocomplete="off" value="${h(S.pmPick || "")}"></div>
 			<div id="pmbox"><p class="note">Pick a person to change their photo, campaign money or super PAC money.</p></div>`;
@@ -276,6 +281,10 @@ export function bindAdmin() {
 		const tab = e.target.closest("[data-tab]");
 		if (tab && tab.dataset.tab === "issues") { location.hash = "#/issues"; return; }
 		if (tab) { S.adminTab = tab.dataset.tab; renderAdmin(); return; }
+		if (e.target.closest("[data-hover-apply]")) {
+			const choice = document.querySelector('input[name="hover"]:checked')?.value;
+			return save(() => api("admin/hover", { method: "PUT", body: { choice } }), "Hover card saved");
+		}
 		if (e.target.closest("[data-logo-apply]")) {
 			const choice = document.querySelector('input[name="logo"]:checked')?.value;
 			return save(() => api("admin/logo", { method: "PUT", body: { choice } }), "Logo applied");
