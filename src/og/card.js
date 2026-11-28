@@ -73,7 +73,7 @@ async function photoData(url) {
 export async function renderCard(p, host) {
 	await ready();
 	const st = HEADLINE[p.stance] ? p.stance : "unknown";
-	const photo = await photoData(p.photo_url);
+	const photo = p.photo_data || (await photoData(p.photo_url));
 	const initials = ((p.first || p.name || "?")[0] + ((p.last || "")[0] || "")).toUpperCase();
 	const role = p.chamber === "executive" ? p.role : p.chamber === "governor" ? seat(p) : `${p.role} · ${seat(p)}`;
 	const facts = [];
@@ -81,18 +81,25 @@ export async function renderCard(p, host) {
 	if (p.health > 0) facts.push(`${money(p.health)} from health-industry ${donors}`);
 	if (p.emp > 0) facts.push(`${money(p.emp)} from health-industry employees`);
 	if (!facts.length && p.raised > 0) facts.push(`${money(p.raised)} raised in ${p.state_money ? "their latest campaign" : "2025-26"}`);
-	if (p.chamber === "house" || p.chamber === "senate") {
-		const a = (() => { try { return JSON.parse(p.aipac || "null"); } catch { return null; } })() || {};
-		const helped = (a.direct || 0) + (a.earmarked || 0) + (a.udp_support || 0), against = a.udp_oppose || 0;
+	const ta = (() => { try { return JSON.parse(p.trackaipac || "null"); } catch { return null; } })();
+	if ((p.chamber === "house" || p.chamber === "senate") && ta?.status) {
+		// Same wording as aipacLine() in src/client/badges.js: Track AIPAC's total first.
+		facts.push(ta.status === "funded" && ta.total > 0 ? `Israel lobby total: ${money(ta.total)} (Track AIPAC)`
+			: ta.status === "rejects" ? "Rejects AIPAC money (Track AIPAC)" : "No pro-Israel PAC money (Track AIPAC)");
+	} else if (p.chamber === "house" || p.chamber === "senate") {
+		// Same wording as aipacLine(p, money, { compact: true }) in src/client/badges.js.
+		const c = (() => { try { return JSON.parse(p.israel_career || "null"); } catch { return null; } })() || {};
 		const bits = [];
-		if (helped > 0) bits.push(`${money(helped)} from AIPAC${a.udp_support > 0 ? " and its super PAC" : ""}`);
-		if (against > 0) bits.push(`${money(against)} spent against them by AIPAC's super PAC`);
-		facts.push(bits.join(" · ") || "No AIPAC money");
+		if (c.for > 0) bits.push(`${money(c.for)} from AIPAC and other pro-Israel PACs since ${c.first_cycle - 1}`);
+		if (c.vs_opponents > 0) bits.push(`${money(c.vs_opponents)} spent against their opponents`);
+		if (c.against > 0) bits.push(`${money(c.against)} spent against them`);
+		if (bits.length) facts.push(...bits); else facts.push("No AIPAC or pro-Israel PAC money on record");
 	}
-	const tight = facts.length > 2;
+	const tight = facts.length > 2 || facts.join("").length > 110;
+	const tighter = facts.length > 3;
 	const nameSize = p.name.length > 26 ? 44 : p.name.length > 18 ? 50 : 56;
 	const src = (st === "unknown" ? "No public position found yet." : "Sources on the profile.")
-		+ (p.state_money ? " State campaign finance records." : " FEC data, 2025-26 cycle.");
+		+ (p.state_money ? " State campaign finance records." : " FEC data, 2025-26 cycle; Israel lobby total from Track AIPAC.");
 
 	const tree = el("div", { width: 1200, height: 630, flexDirection: "column", background: C.bg, fontFamily: "Sans", color: C.ink },
 		el("div", { height: 14, width: 1200, background: C[st] }),
@@ -108,7 +115,7 @@ export async function renderCard(p, host) {
 					el("div", { marginTop: 10, fontSize: 26, fontWeight: 600, color: C[p.party] || C.ink2 }, `${PARTY[p.party] || p.party || ""} · ${role}`),
 					el("div", { marginTop: 20, background: C[st], borderRadius: 14, padding: "16px 24px", fontSize: HEADLINE[st].length > 34 ? 32 : 40, fontWeight: 800, color: "#ffffff" }, HEADLINE[st]),
 					el("div", { flexDirection: "column", marginTop: 22 },
-						facts.map((t) => el("div", { fontSize: tight ? 25 : 28, fontWeight: 600, marginBottom: tight ? 5 : 8 }, t)),
+						facts.map((t) => el("div", { fontSize: tighter ? 22 : tight ? 25 : 28, fontWeight: 600, marginBottom: tighter ? 3 : tight ? 5 : 8 }, t)),
 						p.phone ? el("div", { fontSize: 30, fontWeight: 600, color: C.supports, marginTop: 4 }, `Call: ${p.phone}`) : null)))),
 		el("div", { flexDirection: "column", padding: "0 56px 40px 56px" },
 			el("div", { fontSize: 17, color: C.ink3 }, src),
@@ -117,4 +124,37 @@ export async function renderCard(p, host) {
 
 	const svg = await satori(tree, { width: 1200, height: 630, fonts: FONTS });
 	return new Resvg(svg, { fitTo: { mode: "width", value: 1200 } }).render().asPng();
+}
+
+// ---------------------------------------------------------------- site logo / favicon
+// Three marks the admin can switch between (meta key 'logo'). Text is drawn through satori so the SVG
+// carries outlines, not font references, and looks the same everywhere. E's stacked words can't be read
+// below ~48px, so small sizes of E use A's W.
+export const LOGOS = { A: "W monogram", D: "Capitol, blocked", E: "Stacked wordmark" };
+const tile = (...children) => el("div", { width: 64, height: 64, borderRadius: 14, background: C.bg, flexDirection: "column",
+	alignItems: "center", justifyContent: "center", fontFamily: "Serif", fontWeight: 700 }, ...children);
+const LOGO_TREES = {
+	A: () => tile(el("div", { fontSize: 42, lineHeight: 1, color: C.ink, marginTop: -2 }, "W"),
+		el("div", { width: 40, height: 5, borderRadius: 2, background: C.opposes, marginTop: 4 })),
+	E: () => tile(el("div", { fontSize: 12, lineHeight: 1.1, color: C.ink, whiteSpace: "nowrap" }, "WHO"),
+		el("div", { fontSize: 12, lineHeight: 1.1, color: C.ink, whiteSpace: "nowrap" }, "STANDS"),
+		el("div", { fontSize: 8.5, lineHeight: 1.5, color: C.opposes, whiteSpace: "nowrap", letterSpacing: 0.2 }, "IN THE WAY")),
+};
+const LOGO_D = `<svg viewBox="0 0 64 64" width="64" height="64" xmlns="http://www.w3.org/2000/svg"><rect width="64" height="64" rx="14" fill="${C.bg}"/>`
+	+ `<path d="M32 9 L32 14" stroke="${C.ink}" stroke-width="2.5" stroke-linecap="round"/><path d="M18 34 A14 14 0 0 1 46 34 Z" fill="${C.ink}"/>`
+	+ `<rect x="14" y="34" width="36" height="4" fill="${C.ink}"/><rect x="17" y="38" width="3" height="9" fill="${C.ink}"/><rect x="25" y="38" width="3" height="9" fill="${C.ink}"/>`
+	+ `<rect x="36" y="38" width="3" height="9" fill="${C.ink}"/><rect x="44" y="38" width="3" height="9" fill="${C.ink}"/><rect x="10" y="49" width="44" height="6" rx="2" fill="${C.opposes}"/></svg>`;
+
+// size: the pixel size it will be shown at (picks E's small fallback); returns SVG text.
+export async function logoSvg(choice, size = 512) {
+	const k = LOGOS[choice] ? (choice === "E" && size < 48 ? "A" : choice) : "A";
+	if (k === "D") return LOGO_D;
+	await ready();
+	return satori(LOGO_TREES[k](), { width: 64, height: 64, fonts: FONTS });
+}
+
+export async function logoPng(choice, size) {
+	const svg = await logoSvg(choice, size);
+	await ready();
+	return new Resvg(svg, { fitTo: { mode: "width", value: size } }).render().asPng();
 }

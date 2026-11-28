@@ -126,10 +126,10 @@ async function draw(d, square) {
 	if (pacs > 0) facts.push(`${money(pacs)} from health-industry PACs`);
 	if (emp > 0) facts.push(`${money(emp)} from health-industry employees`);
 	if (!facts.length && f.totals) facts.push(`${money(f.totals.receipts)} raised in 2025–26`);
-	const aipac = aipacLine({ ...p, aipac: f.israel?.aipac || null }, money);
+	const aipac = aipacLine({ ...p, israel_career: f.israel?.career || null, trackaipac: f.israel?.trackaipac || null }, money, { compact: true });
 	if (aipac) facts.push(aipac);
 	let fy = by + bh + (square ? 84 : 46);
-	const tight = !square && facts.length > 2;
+	const tight = !square && (facts.length > 2 || facts.join("").length > 110);
 	ctx.font = `600 ${square ? 42 : tight ? 25 : 28}px ${SANS}`; ctx.fillStyle = COLORS.ink;
 	for (const line of facts) {
 		for (const l of wrap(ctx, line, square ? W - pad * 2 : tw)) { ctx.fillText(l, square ? pad : tx, fy); fy += square ? 62 : tight ? 33 : 38; }
@@ -140,7 +140,7 @@ async function draw(d, square) {
 	}
 
 	// footer: source note above the rule, site address below (separate lines so they never collide)
-	const src = (st === "unknown" ? "No public position found yet." : "Sources on the profile.") + " FEC data, 2025–26 cycle.";
+	const src = (st === "unknown" ? "No public position found yet." : "Sources on the profile.") + " FEC data, 2025-26 cycle; Israel lobby total from Track AIPAC.";
 	ctx.font = `400 ${square ? 22 : 17}px ${SANS}`; ctx.fillStyle = COLORS.ink3;
 	ctx.fillText(src, pad, H - pad - (square ? 62 : 48));
 	ctx.fillStyle = COLORS.line; ctx.fillRect(pad, H - pad - (square ? 44 : 34), W - pad * 2, 2);

@@ -903,6 +903,39 @@ meta = {"congresses": [{"id": 120, "label": "120th Congress (from Jan 3, 2027)"}
         "sector_votes": {v["id"]: {k: v.get(k) for k in ("chamber", "date", "title", "industry_side", "industry_position", "industry_source_url", "source_url", "sector")}
                          for v in sector_votes},
         "roster_source": f"https://en.wikipedia.org/w/index.php?title=120th_United_States_Congress&oldid={ROSTER_REV}"}
+# Current X profile pictures (scripts/x_avatars.py) replace official portraits, which are often decades old.
+_xa = RAW / "x_avatars.json"
+if _xa.exists():
+    _av = json.load(open(_xa))
+    for p_ in politicians:
+        if _av.get(p_["id"]):
+            p_["photo_url"] = _av[p_["id"]]
+
+# Career pro-Israel PAC money, all cycles since 1980, Track AIPAC's committee list (scripts/israel_career.py).
+_ic = RAW / "israel_career.json"
+if _ic.exists():
+    _car = json.load(open(_ic))
+    _fin = {f_["politician_id"]: f_ for f_ in finance}
+    for pid, c_ in _car.items():
+        if pid not in _fin:
+            _fin[pid] = {"politician_id": pid, "as_of": TODAY, "data": {}}
+            finance.append(_fin[pid])
+        _fin[pid]["data"].setdefault("israel", {})["career"] = {**{k: c_[k] for k in ("for", "vs_opponents", "against", "first_cycle", "last_cycle", "aipac")},
+                                                               "pacs": c_["pacs"][:20]}
+    print("career pro-Israel money for", len(_car))
+
+# Track AIPAC's published "Israel Lobby Total" (scripts/trackaipac.py): the headline pro-Israel figure.
+_ta = RAW / "trackaipac.json"
+if _ta.exists():
+    _tad = json.load(open(_ta))
+    _fin = {f_["politician_id"]: f_ for f_ in finance}
+    for pid, t_ in _tad["people"].items():
+        if pid not in _fin:
+            _fin[pid] = {"politician_id": pid, "as_of": TODAY, "data": {}}
+            finance.append(_fin[pid])
+        _fin[pid]["data"].setdefault("israel", {})["trackaipac"] = {"total": t_["total"], "status": t_["status"], "url": t_["url"], "as_of": _tad["as_of"]}
+    print("Track AIPAC totals for", len(_tad["people"]))
+
 seed = {"version": f"120b-{TODAY}-{len(positions)}-{len(issues)}-{len(exit_polls['national'])}-{len(exit_polls['senate'])}",
         "terms": terms, "races": races, "key_votes": key_votes, "member_votes": member_votes, "issues": issues, "issue_polls": issue_polls, "meta": meta, "generated": TODAY, "politicians": politicians, "positions": positions, "policies": policies,
         "outlets": outlets, "finance": finance, "agenda": agenda}

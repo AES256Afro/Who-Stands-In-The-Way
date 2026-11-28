@@ -26,6 +26,11 @@ python3 scripts/israel_money.py
 .venv/bin/python scripts/state_officials.py
 python3 scripts/state_finance.py --refresh
 python3 scripts/agenda.py
+# Pro-Israel money: Track AIPAC's published totals, plus our own count from FEC bulk files (needs data/raw/bulk/pas2, cn, ccl, indiv22/24).
+python3 scripts/trackaipac.py
+python3 scripts/israel_career.py
+# Current X profile pictures (slow: Internet Archive lookups; only new handles are looked up).
+python3 scripts/x_avatars.py
 python3 scripts/build_seed.py
 python3 scripts/money_network.py
 python3 scripts/vote_records.py

@@ -40,6 +40,10 @@ const SCHEMA = [
 		id INTEGER PRIMARY KEY AUTOINCREMENT, politician_id TEXT NOT NULL, donor_name TEXT NOT NULL, donor_type TEXT,
 		sector TEXT, amount REAL, cycle TEXT, source_url TEXT, notes TEXT)`,
 	`CREATE TABLE IF NOT EXISTS finance (politician_id TEXT PRIMARY KEY, as_of TEXT, data TEXT)`,
+	// Money figures set by hand in the admin panel; merged over the FEC data on every seed refresh.
+	`CREATE TABLE IF NOT EXISTS finance_override (politician_id TEXT PRIMARY KEY, data TEXT NOT NULL, note TEXT, source_url TEXT, updated_at TEXT)`,
+	// Photos uploaded in the admin panel, base64, served at /api/photo/<id>.
+	`CREATE TABLE IF NOT EXISTS photos (politician_id TEXT PRIMARY KEY, type TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT)`,
 	`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`,
 	`CREATE TABLE IF NOT EXISTS changes (
 		id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, politician_id TEXT, kind TEXT NOT NULL, field TEXT,
@@ -115,6 +119,7 @@ const MIGRATIONS = [
 	"ALTER TABLE politicians ADD COLUMN sdistrict TEXT",
 	"ALTER TABLE politicians ADD COLUMN email TEXT",
 	"ALTER TABLE politicians ADD COLUMN caucuses TEXT",
+	"ALTER TABLE politicians ADD COLUMN photo_source TEXT",
 	"CREATE INDEX IF NOT EXISTS idx_pol_level ON politicians (level, state)",
 ];
 
@@ -148,7 +153,10 @@ async function init(db) {
 	// A lean you set by hand (lean_source = 'admin') survives refreshes; otherwise the voting-record lean is updated.
 	const keepAdmin = (c) => `${c} = CASE WHEN politicians.lean_source = 'admin' THEN politicians.${c} ELSE excluded.${c} END`;
 	const upd = COLS.politicians.filter((c) => c !== "id" && c !== "notes")
-		.map((c) => (c === "lean" || c === "lean_note" ? keepAdmin(c) : `${c} = excluded.${c}`)).join(", ");
+		.map((c) => (c === "lean" || c === "lean_note" ? keepAdmin(c)
+			// A photo set or uploaded in the admin panel survives refreshes.
+			: c === "photo_url" ? "photo_url = CASE WHEN politicians.photo_source = 'admin' THEN politicians.photo_url ELSE excluded.photo_url END"
+			: `${c} = excluded.${c}`)).join(", ");
 	bulk(`INSERT INTO politicians (%COLS%) SELECT %SEL% FROM json_each(?) WHERE 1 ON CONFLICT (id) DO UPDATE SET ${upd}`, COLS.politicians, seed.politicians, 120);
 	bulk("INSERT OR IGNORE INTO policies (%COLS%) SELECT %SEL% FROM json_each(?)", COLS.policies, seed.policies, 100);
 	// Seeded stances only fill gaps or replace earlier seeded ones; a stance you edited by hand is never overwritten.
@@ -174,6 +182,7 @@ async function init(db) {
 		[], (seed.agenda || []).map((a) => ({ ...a, data: JSON.stringify(a.data) })), 20);
 	stmts.push(db.prepare("DELETE FROM finance"));
 	bulk("INSERT INTO finance (%COLS%) SELECT %SEL% FROM json_each(?)", ["politician_id", "as_of", "data"], seed.finance.map((f) => ({ ...f, data: JSON.stringify(f.data) })), 60);
+	stmts.push(...applyOverrides(db));
 	stmts.push(db.prepare("INSERT INTO meta (key, value) VALUES ('seed_version', ?), ('seed_meta', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").bind(seed.version, JSON.stringify(seed.meta || {})));
 	// D1 caps one batch at 32 MiB, so send the load in parts, in order. The seed version is written by the
 	// last statement, so if a part fails the next request starts the load over.
@@ -242,12 +251,24 @@ const clean = (table, body) => {
 	}
 	return out;
 };
-const safeUrl = (u) => !u || /^https?:\/\//i.test(u);
+const safeUrl = (u) => !u || /^https?:\/\//i.test(u) || /^\/api\/photo\/[^/]+(\?v=\d+)?$/.test(u);
 const URL_FIELDS = ["post_url", "website", "contact_form", "logo_url", "contact_url", "clip_url", "source_url", "photo_url", "url", "youtube"];
 const badUrl = (row) => URL_FIELDS.find((f) => row[f] != null && !safeUrl(String(row[f])));
 
+// Re-apply hand-set money figures over the seeded finance rows (json_patch merges nested objects).
+const applyOverrides = (db, id = null) => [
+	db.prepare(`INSERT INTO finance (politician_id, as_of, data) SELECT o.politician_id, o.updated_at, '{}' FROM finance_override o
+		WHERE (?1 IS NULL OR o.politician_id = ?1) AND NOT EXISTS (SELECT 1 FROM finance f WHERE f.politician_id = o.politician_id)`).bind(id),
+	db.prepare(`UPDATE finance SET data = json_patch(data, (SELECT o.data FROM finance_override o WHERE o.politician_id = finance.politician_id))
+		WHERE politician_id IN (SELECT politician_id FROM finance_override WHERE ?1 IS NULL OR politician_id = ?1)`).bind(id),
+];
+// Money figures the admin panel may set, as paths into finance.data.
+const MONEY_FIELDS = ["totals.receipts", "totals.pacs", "health_total", "employees.total", "outside.support", "outside.oppose",
+	"israel.aipac.direct", "israel.aipac.earmarked", "israel.aipac.udp_support", "israel.aipac.udp_oppose", "israel.for", "israel.against",
+	"israel.career.for", "israel.career.vs_opponents", "israel.career.against", "israel.trackaipac.total"];
+
 async function bootstrap(db) {
-	const [pols, policies, positions, outlets, apps, meta, terms, issues, polls, kv, mv] = await db.batch([
+	const [pols, policies, positions, outlets, apps, meta, logo, terms, issues, polls, kv, mv] = await db.batch([
 		db.prepare(`SELECT p.id, p.name, p.last, p.chamber, p.role, p.state, p.district, p.party, p.voting, p.status,
 			p.term_end, p.next_election, p.photo_url, p.twitter, p.lean, p.ideology, p.phone, p.phone_label, p.caucuses,
 			EXISTS (SELECT 1 FROM json_each(COALESCE(p.committees,'[]')) WHERE json_extract(value,'$.health') = 1) AS health_cmte,
@@ -260,6 +281,10 @@ async function bootstrap(db) {
 			json_extract(f.data,'$.israel.aipac') AS aipac,
 			json_extract(f.data,'$.israel.for') AS israel_for,
 			json_extract(f.data,'$.israel.against') AS israel_against,
+			json_extract(f.data,'$.israel.trackaipac') AS trackaipac,
+			CASE WHEN json_extract(f.data,'$.israel.career') IS NOT NULL THEN json_object('for', json_extract(f.data,'$.israel.career.for'), 'vs_opponents', json_extract(f.data,'$.israel.career.vs_opponents'),
+				'against', json_extract(f.data,'$.israel.career.against'), 'first_cycle', json_extract(f.data,'$.israel.career.first_cycle'),
+				'aipac', json_extract(f.data,'$.israel.career.aipac')) END AS israel_career,
 			json_extract(f.data,'$.alignment.level') AS align
 			FROM politicians p LEFT JOIN finance f ON f.politician_id = p.id
 			WHERE COALESCE(p.level, 'federal') != 'state' ORDER BY p.last, p.name`),
@@ -269,13 +294,14 @@ async function bootstrap(db) {
 		db.prepare(`SELECT a.*, o.name AS outlet_name, o.logo_url AS outlet_logo, o.website AS outlet_website
 			FROM appearances a LEFT JOIN outlets o ON o.id = a.outlet_id ORDER BY a.date DESC, a.id DESC LIMIT 500`),
 		db.prepare("SELECT value FROM meta WHERE key = 'seed_meta'"),
+		db.prepare("SELECT value FROM meta WHERE key = 'logo'"),
 		db.prepare("SELECT * FROM terms"),
 		db.prepare("SELECT * FROM issues ORDER BY rank, name"),
 		db.prepare("SELECT * FROM issue_polls ORDER BY date DESC"),
 		db.prepare("SELECT * FROM key_votes ORDER BY date, sort"),
 		db.prepare("SELECT vote_id, politician_id, vote FROM member_votes"),
 	]);
-	return { meta: JSON.parse(meta.results[0]?.value || "{}"), terms: terms.results, issues: issues.results,
+	return { meta: JSON.parse(meta.results[0]?.value || "{}"), logo: logo.results[0]?.value || "A", terms: terms.results, issues: issues.results,
 		issue_polls: polls.results, scale: SCALE,
 		key_votes: kv.results.map((v) => ({ ...v, tally: JSON.parse(v.tally || "{}") })),
 		member_votes: mv.results.map((m) => [m.vote_id, m.politician_id, m.vote]), politicians: pols.results, policies: policies.results, positions: positions.results,
@@ -349,6 +375,75 @@ async function admin(req, env, parts) {
 			change(db, { politician_id: id, kind: "evidence", field: "agenda", note: "Agenda edited" })]);
 		return json({ ok: true });
 	}
+	if (table === "logo" && method === "PUT") {
+		if (!["A", "D", "E"].includes(body.choice)) return fail(400, "Pick logo A, D or E");
+		const prev = (await db.prepare("SELECT value FROM meta WHERE key = 'logo'").first())?.value || "A";
+		await db.batch([db.prepare("INSERT INTO meta (key, value) VALUES ('logo', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").bind(body.choice),
+			change(db, { kind: "profile", field: "site logo", old: prev, new: body.choice })]);
+		return json({ ok: true });
+	}
+	if (table === "photo" && id && (method === "PUT" || method === "DELETE")) {
+		const prev = await db.prepare("SELECT photo_url FROM politicians WHERE id = ?").bind(id).first();
+		if (!prev) return fail(404, "No such person");
+		if (method === "DELETE") {
+			// Back to the photo from the data refresh.
+			const seed = (await import("../seed/seed.json")).default;
+			const orig = seed.politicians.find((p) => p.id === id)?.photo_url ?? null;
+			await db.batch([db.prepare("DELETE FROM photos WHERE politician_id = ?").bind(id),
+				db.prepare("UPDATE politicians SET photo_url = ?, photo_source = NULL WHERE id = ?").bind(orig, id),
+				change(db, { politician_id: id, kind: "profile", field: "photo_url", old: prev.photo_url, new: orig })]);
+			return json({ ok: true, photo_url: orig });
+		}
+		const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(body.data || ""));
+		if (!m) return fail(400, "Send a JPEG, PNG or WebP image");
+		if (m[2].length > 1_400_000) return fail(400, "Image is too large (1 MB max). Resize it first.");
+		const url = `/api/photo/${encodeURIComponent(id)}?v=${Date.now()}`;
+		await db.batch([
+			db.prepare(`INSERT INTO photos (politician_id, type, data, updated_at) VALUES (?,?,?,?)
+				ON CONFLICT (politician_id) DO UPDATE SET type = excluded.type, data = excluded.data, updated_at = excluded.updated_at`).bind(id, m[1], m[2], new Date().toISOString()),
+			db.prepare("UPDATE politicians SET photo_url = ?, photo_source = 'admin' WHERE id = ?").bind(url, id),
+			change(db, { politician_id: id, kind: "profile", field: "photo_url", old: prev.photo_url, new: "uploaded photo" })]);
+		return json({ ok: true, photo_url: url });
+	}
+	if (table === "finance" && id && (method === "PUT" || method === "DELETE")) {
+		const exists = await db.prepare("SELECT id FROM politicians WHERE id = ?").bind(id).first();
+		if (!exists) return fail(404, "No such person");
+		if (method === "DELETE") {
+			const seed = (await import("../seed/seed.json")).default;
+			const orig = seed.finance.find((f) => f.politician_id === id);
+			await db.batch([db.prepare("DELETE FROM finance_override WHERE politician_id = ?").bind(id),
+				orig ? db.prepare(`INSERT INTO finance (politician_id, as_of, data) VALUES (?,?,?)
+					ON CONFLICT (politician_id) DO UPDATE SET as_of = excluded.as_of, data = excluded.data`).bind(id, orig.as_of, JSON.stringify(orig.data))
+					: db.prepare("DELETE FROM finance WHERE politician_id = ?").bind(id),
+				change(db, { politician_id: id, kind: "profile", field: "money", new: "hand-set money figures removed" })]);
+			return json({ ok: true });
+		}
+		// body.values: {"totals.receipts": 123, ...}; a blank value leaves the FEC figure in place.
+		const patch = {}, shown = [];
+		for (const [k, raw] of Object.entries(body.values || {})) {
+			if (!MONEY_FIELDS.includes(k) || raw === "" || raw == null) continue;
+			const n = Number(String(raw).replace(/[$,\s]/g, ""));
+			if (!Number.isFinite(n) || n < 0 || n > 5e9) return fail(400, `${k}: enter a dollar amount`);
+			let o = patch;
+			const path = k.split(".");
+			for (const seg of path.slice(0, -1)) o = o[seg] ??= {};
+			o[path.at(-1)] = Math.round(n * 100) / 100;
+			shown.push(`${k} = $${Math.round(n).toLocaleString("en-US")}`);
+		}
+		if (!shown.length) return fail(400, "Enter at least one amount");
+		const note = typeof body.note === "string" ? body.note.trim() || null : null;
+		const src = typeof body.source_url === "string" ? body.source_url.trim() || null : null;
+		if (src && !/^https?:\/\//i.test(src)) return fail(400, "Links must start with http:// or https://");
+		const prev = await db.prepare("SELECT data FROM finance_override WHERE politician_id = ?").bind(id).first();
+		await db.batch([
+			db.prepare(`INSERT INTO finance_override (politician_id, data, note, source_url, updated_at) VALUES (?,?,?,?,?)
+				ON CONFLICT (politician_id) DO UPDATE SET data = json_patch(finance_override.data, excluded.data), note = excluded.note,
+				source_url = excluded.source_url, updated_at = excluded.updated_at`).bind(id, JSON.stringify(patch), note, src, new Date().toISOString().slice(0, 10)),
+			...applyOverrides(db, id),
+			change(db, { politician_id: id, kind: "profile", field: "money", old: prev ? "hand-set" : "FEC data", new: shown.join("; "), note, source_url: src }),
+		]);
+		return json({ ok: true });
+	}
 	if (table === "lean" && method === "PUT" && id) {
 		if (!SCALE.includes(body.lean)) return fail(400, "Pick a valid lean");
 		const note = typeof body.lean_note === "string" ? body.lean_note.trim() || null : null;
@@ -410,6 +505,11 @@ async function admin(req, env, parts) {
 		if (!keys.length) return fail(400, "Nothing to update");
 		for (const r of REQUIRED[table]) if (r !== "id" && r in row && row[r] == null) return fail(400, `${r} is required`);
 		const prev = table === "politicians" ? await db.prepare("SELECT * FROM politicians WHERE id = ?").bind(id).first() : null;
+		// A photo changed by hand is kept on refresh; clearing it hands the photo back to the data refresh.
+		if (prev && "photo_url" in row && (prev.photo_url ?? null) !== (row.photo_url ?? null)) {
+			row.photo_source = row.photo_url ? "admin" : null;
+			keys.push("photo_source");
+		}
 		const stmts = [db.prepare(`UPDATE ${table} SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE id = ?`).bind(...keys.map((k) => row[k]), id)];
 		if (prev) for (const k of PROFILE_FIELDS) if (k in row && String(prev[k] ?? "") !== String(row[k] ?? "")) stmts.push(change(db, { politician_id: id, kind: "profile", field: k, old: prev[k], new: row[k] }));
 		await db.batch(stmts);
@@ -487,12 +587,15 @@ async function cardData(env, id) {
 		COALESCE(json_extract(f.data,'$.health_total'),0) + COALESCE((SELECT SUM(json_extract(value,'$.health_total'))
 			FROM json_each(json_extract(f.data,'$.leadership'))),0) AS health, json_extract(f.data,'$.employees.total') AS emp,
 		COALESCE(json_extract(f.data,'$.totals.receipts'), json_extract(f.data,'$.total')) AS raised,
-		json_extract(f.data,'$.state') AS state_money, json_extract(f.data,'$.israel.aipac') AS aipac
+		json_extract(f.data,'$.state') AS state_money, json_extract(f.data,'$.israel.aipac') AS aipac, json_extract(f.data,'$.israel.trackaipac') AS trackaipac,
+		CASE WHEN json_extract(f.data,'$.israel.career') IS NOT NULL THEN json_object('for', json_extract(f.data,'$.israel.career.for'), 'vs_opponents', json_extract(f.data,'$.israel.career.vs_opponents'),
+				'against', json_extract(f.data,'$.israel.career.against'), 'first_cycle', json_extract(f.data,'$.israel.career.first_cycle'),
+				'aipac', json_extract(f.data,'$.israel.career.aipac')) END AS israel_career
 		FROM politicians p LEFT JOIN finance f ON f.politician_id = p.id WHERE p.id = ?`).bind(id).first();
 }
 // Changes whenever anything drawn on the card changes, so previews refetch instead of showing a stale card.
 const cardVersion = async (p) => {
-	const key = [p.name, p.role, p.party, p.stance, p.health, p.emp, p.raised, p.phone, p.photo_url, p.chamber, p.district, p.sdistrict, p.aipac].join("|");
+	const key = [p.name, p.role, p.party, p.stance, p.health, p.emp, p.raised, p.phone, p.photo_url, p.chamber, p.district, p.sdistrict, p.aipac, p.israel_career, p.trackaipac].join("|");
 	const d = new Uint8Array(await crypto.subtle.digest("SHA-1", new TextEncoder().encode(key)));
 	return [...d.slice(0, 5)].map((b) => b.toString(16).padStart(2, "0")).join("");
 };
@@ -504,6 +607,11 @@ async function cardImage(req, env, ctx, id) {
 	const cache = caches.default;
 	const hit = await cache.match(key);
 	if (hit) return hit;
+	if (/^\/api\/photo\//.test(p.photo_url || "")) {
+		const up = await env.DB.prepare("SELECT type, data FROM photos WHERE politician_id = ?").bind(p.id).first();
+		// The card renderer draws JPEG and PNG only.
+		if (up && up.type !== "image/webp") p.photo_data = `data:${up.type};base64,${up.data}`;
+	}
 	const { renderCard } = await import("./og/card.js");
 	const png = await renderCard(p, new URL(req.url).host);
 	const res = new Response(png, { headers: { "content-type": "image/png", "cache-control": "public, max-age=86400" } });
@@ -566,6 +674,35 @@ ${m.tags}
 	return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=300" } });
 }
 
+// ---------------------------------------------------------------- site logo and favicons
+// The admin picks the mark (meta key 'logo': A, D or E); every icon size is drawn from it on request
+// and kept in the edge cache under that choice.
+const ICON_VERSION = 2;
+const ICON_SIZES = { "/favicon.ico": 32, "/icon-32.png": 32, "/apple-touch-icon.png": 180, "/icon-192.png": 192, "/icon-512.png": 512 };
+const logoChoice = async (env) => (await env.DB.prepare("SELECT value FROM meta WHERE key = 'logo'").first())?.value || "A";
+async function siteIcon(req, env, ctx, path) {
+	const choice = path.startsWith("/logo/") ? path.slice(6, 7) : await logoChoice(env);
+	// Bump ICON_VERSION when the drawings in src/og/card.js change, so cached icons are redrawn.
+	const key = new Request(`${new URL(req.url).origin}/__icon/v${ICON_VERSION}/${choice}${path.replace(/^\/logo\/./, "/logo")}`);
+	const hit = await caches.default.match(key);
+	if (hit) return hit;
+	const { logoSvg, logoPng, LOGOS } = await import("./og/card.js");
+	if (path.startsWith("/logo/") && !LOGOS[choice]) return new Response("Not found", { status: 404 });
+	const headers = { "cache-control": "public, max-age=600" };
+	let res;
+	if (path === "/site.webmanifest") {
+		res = new Response(JSON.stringify({ name: "Who Stands In The Way", short_name: "Who Stands", start_url: "/", display: "standalone",
+			background_color: "#111214", theme_color: "#111214",
+			icons: [192, 512].map((n) => ({ src: `/icon-${n}.png`, sizes: `${n}x${n}`, type: "image/png" })) }), { headers: { ...headers, "content-type": "application/manifest+json" } });
+	} else if (path.endsWith(".svg")) {
+		res = new Response(await logoSvg(choice, path === "/favicon.svg" ? 32 : 512), { headers: { ...headers, "content-type": "image/svg+xml" } });
+	} else {
+		res = new Response(await logoPng(choice, ICON_SIZES[path]), { headers: { ...headers, "content-type": "image/png" } });
+	}
+	ctx.waitUntil(caches.default.put(key, res.clone()));
+	return res;
+}
+
 // ---------------------------------------------------------------- RSS feed of changes: /changes.xml
 const LEAN_WORD = { left3: "Far left", left2: "Left", left1: "Slightly left", center: "Center", right1: "Slightly right", right2: "Right", right3: "Far right", unknown: "Unknown" };
 const STANCE_WORD = { supports: "Supports", public_option: "Public option only", unclear: "Wishy-washy", opposes: "Opposes", unknown: "Not on record" };
@@ -618,6 +755,11 @@ export default {
 				catch (e) { console.error("card", id, String(e?.stack || e)); return Response.redirect(`${url.origin}/og.png`, 302); }
 			}
 			return sharePage(req, env, id);
+		}
+		if (url.pathname in ICON_SIZES || url.pathname === "/favicon.svg" || url.pathname === "/site.webmanifest" || /^\/logo\/[A-Z]\.svg$/.test(url.pathname)) {
+			ready ??= init(env.DB).catch((e) => { ready = null; throw e; });
+			await ready;
+			return siteIcon(req, env, ctx, url.pathname);
 		}
 		if (url.pathname.startsWith("/p/")) {
 			ready ??= init(env.DB).catch((e) => { ready = null; throw e; });
@@ -677,6 +819,18 @@ export default {
 				]);
 				return json({ agenda: ag.results.map((r) => ({ ...r, data: JSON.parse(r.data || "{}") })), positions: pos.results });
 			}
+			if (parts[0] === "search" && req.method === "GET") {
+				// Header search: everyone not former, Congress and governors first, then name-prefix matches.
+				const q = (url.searchParams.get("q") || "").trim().replace(/[%_]/g, "").slice(0, 60);
+				if (q.length < 2) return json([]);
+				const r = await env.DB.prepare(`SELECT p.id, p.name, p.first, p.last, p.party, p.state, p.chamber, p.role, p.district, p.sdistrict,
+					p.photo_url, p.level, p.status, COALESCE(s.stance, 'unknown') AS stance
+					FROM politicians p LEFT JOIN positions s ON s.politician_id = p.id AND s.policy_id = 'm4a'
+					WHERE p.status != 'former' AND (p.name LIKE ?1 OR p.last LIKE ?2)
+					ORDER BY (COALESCE(p.level, 'federal') = 'state' AND p.chamber != 'governor'), (p.last LIKE ?2) DESC, p.last, p.name LIMIT 15`)
+					.bind(`%${q}%`, `${q}%`).all();
+				return new Response(JSON.stringify(r.results), { headers: { "content-type": "application/json", "cache-control": "public, max-age=300" } });
+			}
 			if (parts[0] === "races" && req.method === "GET") {
 				const r = await env.DB.prepare("SELECT * FROM races ORDER BY chamber DESC, state, district").all();
 				return json(r.results.map((x) => ({ ...x, candidates: JSON.parse(x.candidates || "[]"), exit_polls: JSON.parse(x.exit_polls || "[]") })));
@@ -684,9 +838,12 @@ export default {
 			if (parts[0] === "photo" && parts[1] && req.method === "GET") {
 				// Same-origin copy of a member's photo so share cards can draw it (some photo hosts send
 				// no CORS header on redirects). Only the hosts the baseline uses are fetched.
+				const up = await env.DB.prepare("SELECT type, data FROM photos WHERE politician_id = ?").bind(parts[1]).first();
+				if (up) return new Response(Uint8Array.from(atob(up.data), (c) => c.charCodeAt(0)), { headers: { "content-type": up.type, "cache-control": "public, max-age=86400" } });
 				const row = await env.DB.prepare("SELECT photo_url FROM politicians WHERE id = ?").bind(parts[1]).first();
 				const src = row?.photo_url || "";
-				if (!/^https:\/\/(unitedstates\.github\.io|commons\.wikimedia\.org|upload\.wikimedia\.org)\//.test(src)) return fail(404, "No photo");
+				// Photo links come from the data refresh or the admin panel, never from the request.
+				if (!/^https:\/\//.test(src)) return fail(404, "No photo");
 				const r = await fetch(src, { headers: { "user-agent": "who-stands-in-the-way/1.0" }, cf: { cacheTtl: 86400, cacheEverything: true } });
 				const type = r.headers.get("content-type") || "";
 				if (!r.ok || !type.startsWith("image/")) return fail(404, "No photo");

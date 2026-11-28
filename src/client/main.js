@@ -298,7 +298,9 @@ function renderMain() {
 }
 export const chromeOnly = () => chrome();
 export const chrome = () => `${S.admin ? `<div class="adminbar"><div class="wrap"><span>Signed in as admin — edit controls are visible on every profile.</span><span><a href="#/admin">Admin panel</a> · <a href="#" data-logout>Sign out</a></span></div></div>` : ""}
-	<div class="wrap"><header class="top"><a class="brand" href="#/">Who Stands <span>In The Way</span></a>
+	<div class="wrap"><header class="top"><a class="brand" href="#/"><img class="brand-mark" src="/favicon.svg?v=${h(S.data?.logo || "A")}" width="28" height="28" alt=""><span class="brand-text">Who Stands <span>In The Way</span></span></a>
+	<div class="gsearch"><input type="search" id="gsq" placeholder="Search a politician" autocomplete="off" aria-label="Search politicians" aria-controls="gsr" aria-expanded="false">
+		<div id="gsr" class="gsr" role="listbox" hidden></div></div>
 	<nav><a class="btn ghost" href="#/">Dashboard</a><a class="btn ghost" href="#/zip">Find your rep</a><a class="btn ghost" href="#/votes">Key votes</a><a class="btn ghost" href="#/money">Money</a><a class="btn ghost" href="#/states">States</a><a class="btn ghost" href="#/focus/TX">Texas</a><a class="btn ghost" href="#/issues">Issues</a><a class="btn ghost" href="#/changes">Changes</a><a class="btn ghost" href="#/elections">2026 results</a><a class="btn" href="#/admin">${S.admin ? "Admin panel" : "Admin"}</a></nav></header></div>`;
 export const footer = () => `<footer><div class="wrap">Baseline: the Congress sworn in January 3, 2027, from <a href="${url(S.data.meta?.roster_source || "https://en.wikipedia.org/wiki/120th_United_States_Congress")}" target="_blank" rel="noopener">Wikipedia's 120th Congress roster</a> (checked against Wikidata); returning members' accounts from the <a href="https://github.com/unitedstates/congress-legislators" target="_blank" rel="noopener">congress-legislators</a> project; returning members' support = sponsors and cosponsors of the 119th Congress bill on <a href="https://www.congress.gov/bill/119th-congress/house-bill/3069" target="_blank" rel="noopener">congress.gov</a>; money from <a href="https://www.fec.gov/data/browse-data/?tab=bulk-data" target="_blank" rel="noopener">FEC bulk filings</a> (2025–26 cycle); lean starts from each member's voting record (<a href="https://voteview.com" target="_blank" rel="noopener">Voteview</a> DW-NOMINATE, 119th Congress) and can be overridden by hand; newcomers' stances researched from campaign statements in November 2026 and linked to their source. "Not on record" means not a cosponsor and nothing documented yet. Everything after the baseline is maintained by hand.</div></footer>`;
 
@@ -442,7 +444,7 @@ async function openProfile(id) {
 				${!state && p.chamber !== "executive" && !p.id.startsWith("X-") ? link("https://www.congress.gov/member/x/" + encodeURIComponent(p.id), "Congress.gov") : ""}
 				${p.wikipedia ? link("https://en.wikipedia.org/wiki/" + encodeURIComponent(p.wikipedia.replace(/ /g, "_")), "Wikipedia") : ""}</div>
 			<p class="note">Health-industry PACs are flagged by matching PAC and parent-company names: pharma and distributors, insurers and PBMs, hospitals, medical devices, care providers (dialysis, labs, nursing homes, physician staffing) and doctors' groups. Nurses' groups and unions are left out. Donations from individual executives and employees aren't industry-coded by the FEC; OpenSecrets has that breakdown.</p>
-			${S.admin ? adminProfileTools.edit(p) : ""}
+			${S.admin ? adminProfileTools.edit(p) + adminProfileTools.photomoney(p, f) : ""}
 		</div>`;
 	dlg.dataset.id = p.id;
 	if (!state) votingRecord(dlg.querySelector("#vrec"), p);
@@ -457,6 +459,57 @@ export async function refresh(keepProfile) {
 	if (keepProfile && dlg.open) { dlg.dataset.keep = dlg.dataset.id; dlg.dataset.scroll = dlg.scrollTop; }
 	await load();
 	route();
+}
+
+// ------------------------------------------------------------------ header search
+// Members of Congress match instantly from the loaded data; state officials come from /api/search.
+function bindSearch() {
+	let timer = 0, seq = 0, active = -1;
+	const box = () => $("#gsr"), input = () => $("#gsq");
+	const row = (p) => `<button type="button" role="option" class="gsr-row" data-id="${h(p.id)}">${avatar(p)}
+		<span><b>${h(p.name)}</b><br><small>${h(p.party || "")}${p.party ? " · " : ""}${h(seat(p))}${p.status === "incoming" ? " · new" : ""}</small></span>
+		${pill(p.stance || stanceOf(p.id))}</button>`;
+	const show = (list, q) => {
+		const b = box(); if (!b) return;
+		active = -1;
+		b.innerHTML = list.length ? list.map(row).join("") : `<p class="note" style="margin:8px 12px">No one named "${h(q)}".</p>`;
+		b.hidden = false; input()?.setAttribute("aria-expanded", "true");
+	};
+	const close = () => { const b = box(); if (b) b.hidden = true; input()?.setAttribute("aria-expanded", "false"); };
+	const norm = (s) => String(s || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+	document.addEventListener("input", (e) => {
+		if (e.target.id !== "gsq") return;
+		const q = e.target.value.trim(), n = norm(q);
+		clearTimeout(timer);
+		if (q.length < 2) return close();
+		const local = S.data.politicians.filter((p) => norm(p.name).includes(n)).slice(0, 8);
+		show(local, q);
+		const my = ++seq;
+		timer = setTimeout(async () => {
+			let more = [];
+			try { more = await api("search?q=" + encodeURIComponent(q)); } catch { return; }
+			if (my !== seq) return;
+			const seen = new Set(local.map((p) => p.id));
+			show(local.concat(more.filter((p) => !seen.has(p.id))).slice(0, 15), q);
+		}, 180);
+	});
+	document.addEventListener("keydown", (e) => {
+		if (e.target.id !== "gsq") return;
+		const rows = [...(box()?.querySelectorAll(".gsr-row") || [])];
+		if (e.key === "Escape") { close(); return; }
+		if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+			e.preventDefault();
+			if (!rows.length) return;
+			active = (active + (e.key === "ArrowDown" ? 1 : -1) + rows.length) % rows.length;
+			rows.forEach((r, i) => r.classList.toggle("on", i === active));
+			rows[active].scrollIntoView({ block: "nearest" });
+		}
+		if (e.key === "Enter" && rows.length) { e.preventDefault(); (rows[active] || rows[0]).click(); }
+	});
+	document.addEventListener("click", (e) => {
+		if (e.target.closest(".gsr-row")) { setTimeout(() => { close(); const i = input(); if (i) i.value = ""; }); return; }
+		if (!e.target.closest(".gsearch")) close();
+	});
 }
 
 // ------------------------------------------------------------------ routing + events
@@ -537,6 +590,7 @@ function bind() {
 	});
 	// Going back to a /p/<id> entry may fire popstate, hashchange or both; route once per address.
 	const nav = () => { if (location.href !== route.url) route(); };
+	bindSearch();
 	window.addEventListener("hashchange", nav);
 	window.addEventListener("popstate", nav);
 	bindAdmin();

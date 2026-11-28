@@ -60,15 +60,26 @@ export function aipacBadge(p, { own = true } = {}) {
 	return out.join("");
 }
 
-// One line for cards: what AIPAC gave or spent for them, what its super PAC spent against them, or none.
-// Members of Congress only; AIPAC's committees are federal and don't fund state races.
-export function aipacLine(p, fmt = money) {
+// Career pro-Israel PAC money (scripts/israel_career.py): {for, vs_opponents, against, first_cycle, aipac:{...}, pacs}.
+export const careerOf = (p) => parse(p?.israel_career, null);
+const aipacPart = (a) => (a ? (a.direct || 0) + (a.earmarked || 0) + (a.ie_for || 0) : 0);
+
+// One line for cards: career money from AIPAC and other pro-Israel PACs (with AIPAC's share), outside spending
+// against their opponents and against them, or none. Members of Congress only: these committees fund federal races.
+export const trackOf = (p) => parse(p?.trackaipac, null);
+
+export function aipacLine(p, fmt = money, { compact = false } = {}) {
 	if (p?.chamber !== "house" && p?.chamber !== "senate") return "";
-	const a = aipacOf(p) || { helped: 0, udp_support: 0, udp_oppose: 0 };
-	const out = [];
-	if (a.helped > 0) out.push(`${fmt(a.helped)} from AIPAC${a.udp_support > 0 ? " and its super PAC" : ""}`);
-	if (a.udp_oppose > 0) out.push(`${fmt(a.udp_oppose)} spent against them by AIPAC's super PAC`);
-	return out.join(" · ") || "No AIPAC money";
+	// Track AIPAC's published total is the headline figure; our own FEC count is the fallback.
+	const t = trackOf(p);
+	if (t?.status === "funded" && t.total > 0) return `Israel lobby total: ${fmt(t.total)} (Track AIPAC)`;
+	if (t?.status === "rejects") return "Rejects AIPAC money (Track AIPAC)";
+	if (t?.status === "none") return "No pro-Israel PAC money (Track AIPAC)";
+	const c = careerOf(p) || {}, ai = aipacPart(c.aipac), out = [];
+	if (c.for > 0) out.push(`${fmt(c.for)} from AIPAC and other pro-Israel PACs since ${c.first_cycle - 1}${ai > 0 && !compact ? ` (AIPAC ${fmt(ai)})` : ""}`);
+	if (c.vs_opponents > 0) out.push(`${fmt(c.vs_opponents)} spent against their opponents`);
+	if (c.against > 0) out.push(`${fmt(c.against)} spent against them`);
+	return out.join(" · ") || "No AIPAC or pro-Israel PAC money on record";
 }
 
 const LEVEL = { low: "Low", moderate: "Moderate", high: "High", very_high: "Very high" };
@@ -89,24 +100,38 @@ export function hoverCard(p) {
 }
 
 // ---------------------------------------------------------------- profile sections
+const FEC_CMTE = (id) => `https://www.fec.gov/data/committee/${id}/`;
+
+function careerBlock(c) {
+	if (!c) return `<p class="note">No money from AIPAC or the other pro-Israel PACs on Track AIPAC's list in any FEC record since 1980.</p>`;
+	const ai = c.aipac || {}, cell = (v) => (v ? money(v) : "—");
+	return `<div class="kv"><div><b>${money(c.for)}</b><span>For them since ${c.first_cycle - 1}: gifts, routed donations and ads</span></div>
+			<div><b>${money(aipacPart(ai))}</b><span>Of that, from AIPAC and its super PAC</span></div>
+			${c.vs_opponents ? `<div><b>${money(c.vs_opponents)}</b><span>Spent against their opponents</span></div>` : ""}
+			${c.against ? `<div><b>${money(c.against)}</b><span>Spent against them</span></div>` : ""}</div>
+		<table class="t"><tr><th>Committee</th><th class="n">Gifts</th><th class="n">Routed donations</th><th class="n">Ads for them</th><th class="n">Ads vs. opponents</th><th class="n">Ads against them</th></tr>
+		${(c.pacs || []).map((r) => `<tr><td><a href="${FEC_CMTE(h(r.id))}" target="_blank" rel="noopener">${h(r.name)}</a></td><td class="n">${cell(r.direct)}</td><td class="n">${cell(r.earmarked)}</td><td class="n">${cell(r.ie_for)}</td><td class="n">${cell(r.vs_opponents)}</td><td class="n">${cell(r.against ?? r.ie_against)}</td></tr>`).join("")}</table>`;
+}
+
 export function israelSection(f) {
-	const x = f?.israel;
-	if (!x) return `<h3 id="aipac">AIPAC and pro-Israel groups</h3><p class="note">No money from AIPAC, its super PAC or other pro-Israel PACs found for this cycle.</p>`;
-	const a = x.aipac;
-	const fec = (id) => `https://www.fec.gov/data/committee/${id}/`;
+	const x = f?.israel || {}, c = x.career, a = x.aipac, t = x.trackaipac;
+	const ta = !t ? "" : `<div class="kv"><div><b>${t.status === "funded" ? money(t.total) : t.status === "rejects" ? "Rejects AIPAC" : "$0"}</b>
+		<span>Israel lobby total, career, from <a href="${url(t.url)}" target="_blank" rel="noopener">Track AIPAC ↗</a>${t.as_of ? ` (as of ${h(t.as_of)})` : ""}</span></div></div>`;
+	const head = `<h3 id="aipac">AIPAC and pro-Israel PACs</h3>${ta}<h4 class="mini">Our count from FEC filings, every cycle since 1980</h4>${careerBlock(c)}`;
+	const note = `<p class="note">Counts the 66 committees on <a href="https://www.trackaipac.com/about/aipac" target="_blank" rel="noopener">Track AIPAC's list</a>, from FEC filings: gifts to their campaigns, donations people routed through these PACs (counted from 2021 on, when the AIPAC PAC opened, plus any a PAC reported itself earlier), and outside spending such as ads. "Against their opponents" is outside spending against other candidates for the same seat in the same election. "AIPAC" means only the AIPAC PAC and its super PAC, United Democracy Project; the other committees are separate organizations, listed by name. The headline figure is Track AIPAC's published total; our FEC count can differ, because routed donations before 2021 are only partly in the FEC's bulk files and Track AIPAC matches outside spending to races its own way.</p>`;
+	if (!a) return head + note;
 	const rows = [
 		["AIPAC PAC, direct gifts", a.direct, 0, "C00797670"],
 		[`Donations routed through AIPAC's PAC${a.earmarked_count ? ` (${a.earmarked_count} gifts)` : ""}`, a.earmarked, 0, "C00797670"],
 		["United Democracy Project (AIPAC's super PAC), ads", a.udp_support, a.udp_oppose, "C00799031"],
-		...x.other.map((o) => [o.name, o.amount, 0, o.id]),
-		...x.other_outside.map((o) => [`${o.name}, ads`, o.support, o.oppose, o.id]),
+		...(x.other || []).map((o) => [o.name, o.amount, 0, o.id]),
+		...(x.other_outside || []).map((o) => [`${o.name}, ads`, o.support, o.oppose, o.id]),
 	].filter((r) => r[1] > 0 || r[2] > 0);
-	return `<h3 id="aipac">AIPAC and pro-Israel groups <small>FEC, 2025–26</small></h3>
+	return head + `<h4 class="mini">This election cycle, 2025-26</h4>
 		<div class="kv"><div><b>${money(a.direct + a.earmarked + a.udp_support)}</b><span>From or spent for them by AIPAC</span></div>
 			${a.udp_oppose ? `<div><b>${money(a.udp_oppose)}</b><span>Spent against them by AIPAC's super PAC</span></div>` : ""}
-			<div><b>${money(x.for - (a.direct + a.earmarked + a.udp_support))}</b><span>Other pro-Israel PACs and groups</span></div></div>
-		<table class="t"><tr><th>Committee</th><th class="n">For them</th><th class="n">Against</th></tr>${rows.map((r) => `<tr><td><a href="${fec(h(r[3]))}" target="_blank" rel="noopener">${h(r[0])}</a></td><td class="n">${r[1] ? money(r[1]) : "—"}</td><td class="n">${r[2] ? money(r[2]) : "—"}</td></tr>`).join("")}</table>
-		<p class="note">"AIPAC" counts only committees the FEC ties to AIPAC by name: the AIPAC PAC, donations individuals sent through it (the PAC passes them on, like a bundler), and its super PAC United Democracy Project. Other pro-Israel PACs are separate organizations, listed by name. Routed donations are counted from the candidate's own FEC reports.</p>`;
+			<div><b>${money((x.for || 0) - (a.direct + a.earmarked + a.udp_support))}</b><span>Other pro-Israel PACs and groups</span></div></div>
+		${rows.length ? `<table class="t"><tr><th>Committee</th><th class="n">For them</th><th class="n">Against</th></tr>${rows.map((r) => `<tr><td><a href="${FEC_CMTE(h(r[3]))}" target="_blank" rel="noopener">${h(r[0])}</a></td><td class="n">${r[1] ? money(r[1]) : "—"}</td><td class="n">${r[2] ? money(r[2]) : "—"}</td></tr>`).join("")}</table>` : ""}` + note;
 }
 
 const GROUP = { pharma: "Drugmakers", insurers: "Insurers and PBMs", hospitals: "Hospitals", pro_israel: "AIPAC and pro-Israel groups" };

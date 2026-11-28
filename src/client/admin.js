@@ -1,4 +1,4 @@
-import { S, STANCE, STANCE_ORDER, SIGNAL, KIND, h, api, toast, refresh, markDirty, chrome, seat, stanceOf, pill, appHtml } from "./main.js";
+import { S, STANCE, STANCE_ORDER, SIGNAL, KIND, h, api, toast, refresh, markDirty, chrome, seat, stanceOf, pill, appHtml, avatar, money } from "./main.js";
 
 const $ = (s, el = document) => el.querySelector(s);
 const opt = (v, l, cur) => `<option value="${h(v)}"${String(cur ?? "") === String(v) ? " selected" : ""}>${h(l)}</option>`;
@@ -32,7 +32,76 @@ function appearanceFields(p) {
 		${area("Your notes", "notes")}`;
 }
 
+// ------------------------------------------------------------------ photo and money editors
+// Paths into the finance record; the Worker accepts the same list (MONEY_FIELDS in src/index.ts).
+const MONEY_GROUPS = [
+	["Campaign", [["totals.receipts", "Total raised, 2025-26"], ["totals.pacs", "From PACs"]]],
+	["Health industry", [["health_total", "Health-industry PACs"], ["employees.total", "Health-industry employees"]]],
+	["Super PACs and outside spending, 2025-26", [["outside.support", "Spent for them"], ["outside.oppose", "Spent against them"]]],
+	["AIPAC, 2025-26", [["israel.aipac.direct", "AIPAC PAC direct gifts"], ["israel.aipac.earmarked", "Donations routed through AIPAC PAC"],
+		["israel.aipac.udp_support", "United Democracy Project ads for them"], ["israel.aipac.udp_oppose", "United Democracy Project ads against them"]]],
+	["Track AIPAC (headline figure)", [["israel.trackaipac.total", "Israel lobby total, career"]]],
+	["All pro-Israel PACs", [["israel.for", "For them, 2025-26"], ["israel.against", "Against them, 2025-26"],
+		["israel.career.for", "For them, career"], ["israel.career.vs_opponents", "Against their opponents, career"], ["israel.career.against", "Against them, career"]]],
+];
+const pathGet = (o, path) => path.split(".").reduce((x, k) => (x == null ? x : x[k]), o);
+
+function photoEditor(p) {
+	return `<div class="pm-photo">${avatar(p)}
+		<form class="form" data-form="photolink" data-id="${h(p.id)}">
+			${field("Photo link", "photo_url", /^https?:/.test(p.photo_url || "") ? p.photo_url : "", "url", 'placeholder="https://… image address"')}
+			<div class="actions"><button class="btn primary">Use this link</button>
+				<label class="btn">Upload a photo<input type="file" accept="image/jpeg,image/png,image/webp" data-photo-upload="${h(p.id)}" hidden></label>
+				<button type="button" class="btn" data-photo-reset="${h(p.id)}">Back to the automatic photo</button></div>
+			<p class="note">Right-click an image (for example a Google Images result or their X profile picture), copy the image address and paste it here, or save it and upload it. Uploads are shrunk to 600 pixels. A photo set here stays when the data refreshes.</p>
+		</form></div>`;
+}
+
+function moneyEditor(p, f) {
+	return `<form class="form" data-form="money" data-id="${h(p.id)}">
+		${MONEY_GROUPS.map(([title, rows]) => `<h4 class="mini">${h(title)}</h4><div class="grid">${rows.map(([k, label]) => {
+			const cur = pathGet(f, k);
+			return field(label, "m:" + k, "", "text", `inputmode="decimal" placeholder="${cur == null ? "none on file" : h(money(cur))}"`);
+		}).join("")}</div>`).join("")}
+		<div class="grid">${field("Source link", "source_url", "", "url", 'placeholder="https://… (FEC filing, news report)"')}</div>
+		${area("Note", "note", "", "What this corrects and why")}
+		<div class="actions"><button class="btn primary">Save money figures</button>
+			<button type="button" class="btn" data-money-reset="${h(p.id)}">Remove hand-set figures</button></div>
+		<p class="note">Each box shows the figure on file. Fill in only what you are changing; blank boxes keep the FEC data. Your figures stay when the data refreshes, and each change is logged in the change log.</p>
+	</form>`;
+}
+
+async function loadPhotoMoney(id) {
+	const box = $("#pmbox");
+	if (!box) return;
+	box.innerHTML = `<p class="note">Loading…</p>`;
+	try {
+		const d = await api("politicians/" + encodeURIComponent(id));
+		box.innerHTML = `<h3>${h(d.politician.name)} <small>${h(d.politician.party)}-${h(seat(d.politician))}</small></h3>
+			<h4 class="mini">Photo</h4>${photoEditor(d.politician)}<h4 class="mini">Money</h4>${moneyEditor(d.politician, d.finance || {})}`;
+	} catch (e) { box.innerHTML = `<p class="note">${h(e.message)}</p>`; }
+}
+
+// Shrink an uploaded image to at most 600px on its long side, as JPEG.
+function shrink(file) {
+	return new Promise((resolve, reject) => {
+		const img = new Image();
+		img.onload = () => {
+			const r = Math.min(1, 600 / Math.max(img.width, img.height));
+			const c = document.createElement("canvas");
+			c.width = Math.round(img.width * r); c.height = Math.round(img.height * r);
+			c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+			URL.revokeObjectURL(img.src);
+			resolve(c.toDataURL("image/jpeg", 0.88));
+		};
+		img.onerror = () => reject(new Error("Couldn't read that image"));
+		img.src = URL.createObjectURL(file);
+	});
+}
+
 export const adminProfileTools = {
+	photomoney: (p, f) => `<details class="admin"><summary>Change photo</summary>${photoEditor(p)}</details>
+		<details class="admin"><summary>Change campaign and super PAC money</summary>${moneyEditor(p, f || {})}</details>`,
 	stance: (p, pl, x) => `<details class="admin"><summary>Edit stance</summary>
 		<form class="form" data-form="stance"><input type="hidden" name="politician_id" value="${h(p.id)}"><input type="hidden" name="policy_id" value="${h(pl.id)}">
 			<div class="grid"><label>Stance${stanceSelect(x?.stance)}</label>${field("Source link", "source_url", x?.source_url, "url", 'placeholder="https://"')}</div>
@@ -67,7 +136,7 @@ function personFields(p = {}) {
 			<label>Has a vote?<select name="voting">${opt("1", "Yes", p.voting ?? 1)}${opt("0", "No", p.voting ?? 1)}</select></label>
 			${field("Term ends", "term_end", p.term_end, "date")}${field("Next election", "next_election", p.next_election, "date")}${field("Phone", "phone", p.phone)}
 		</div><div class="grid">
-			${field("Official website", "website", p.website, "url")}${field("Contact form", "contact_form", p.contact_form, "url")}${field("Photo link", "photo_url", p.photo_url, "url")}
+			${field("Official website", "website", p.website, "url")}${field("Contact form", "contact_form", p.contact_form, "url")}${field("Photo link", "photo_url", p.photo_url, "text", 'placeholder="https://… (or upload one under Photo & money)"')}
 			${field("Official X handle", "twitter", p.twitter)}${field("Other X handles (comma-separated)", "twitter_alt", p.twitter_alt)}
 			${field("Bluesky handle", "bluesky", p.bluesky)}${field("Facebook", "facebook", p.facebook)}${field("Instagram", "instagram", p.instagram)}${field("YouTube link", "youtube", p.youtube, "url")}
 			${field("OpenSecrets ID", "opensecrets_id", p.opensecrets_id)}${field("FEC candidate IDs", "fec_ids", p.fec_ids)}
@@ -86,7 +155,7 @@ export function renderAdmin() {
 		return;
 	}
 	const d = S.data, tab = S.adminTab;
-	const tabs = [["appearance", "Log an entry"], ["stances", "Stances"], ["issues", "Issues & polls"], ["outlets", "Outlets"], ["policies", "Policies"], ["people", "Add a person"]];
+	const tabs = [["appearance", "Log an entry"], ["stances", "Stances"], ["issues", "Issues & polls"], ["outlets", "Outlets"], ["policies", "Policies"], ["photomoney", "Photo & money"], ["logo", "Site logo"], ["people", "Add a person"]];
 	let body = "";
 	if (tab === "appearance") {
 		body = `<form class="form" data-form="appearance">${appearanceFields(null)}<div class="actions"><button class="btn primary">Save appearance</button></div></form>
@@ -100,6 +169,16 @@ export function renderAdmin() {
 		body = `<details class="admin" open><summary>+ Add an outlet</summary><form class="form" data-form="outlet">${outletFields()}<div class="actions"><button class="btn primary">Add outlet</button></div></form></details>
 			${d.outlets.map((o) => `<details class="admin"><summary>${h(o.name)}${o.kind ? ` · ${h(o.kind)}` : ""}</summary><form class="form" data-form="outlet" data-id="${o.id}">${outletFields(o)}
 				<div class="actions"><button class="btn primary">Save</button><button type="button" class="btn danger" data-del="outlets" data-delid="${o.id}">Delete</button></div></form></details>`).join("")}`;
+	} else if (tab === "logo") {
+		const cur = d.logo || "A";
+		body = `<p class="note">The site's icon in browser tabs, bookmarks and phone home screens, and the mark next to the site name. Browsers keep icons for a while, so a change can take a day to show everywhere.</p>
+			<div class="logo-pick">${[["A", "W monogram"], ["D", "Capitol, blocked"], ["E", "Stacked wordmark (tabs and bookmarks use A's W, too small to read)"]].map(([k, l]) => `
+				<label class="logo-opt${k === cur ? " on" : ""}"><input type="radio" name="logo" value="${k}"${k === cur ? " checked" : ""}>
+					<img src="/logo/${k}.svg" width="96" height="96" alt=""><span><b>${k}${k === cur ? " · in use" : ""}</b><br><small>${h(l)}</small></span></label>`).join("")}</div>
+			<div class="actions"><button type="button" class="btn primary" data-logo-apply>Use this logo</button></div>`;
+	} else if (tab === "photomoney") {
+		body = `<div class="filters" style="position:static"><input type="search" id="pmpick" list="pols" placeholder="Start typing a name…" autocomplete="off" value="${h(S.pmPick || "")}"></div>
+			<div id="pmbox"><p class="note">Pick a person to change their photo, campaign money or super PAC money.</p></div>`;
 	} else if (tab === "policies") {
 		body = `<details class="admin" open><summary>+ Add a policy to track</summary><form class="form" data-form="policy">${policyFields()}<div class="actions"><button class="btn primary">Add policy</button></div></form></details>
 			${d.policies.map((p) => `<details class="admin"><summary>${h(p.name)}${p.is_primary ? " · primary" : ""}</summary><form class="form" data-form="policy" data-id="${h(p.id)}">${policyFields(p)}
@@ -109,6 +188,7 @@ export function renderAdmin() {
 		body = `<p class="note">For anyone missing, such as the winners of the undecided Louisiana seats or a future special election. Set status to "Former" to hide someone without deleting their history.</p>
 			<form class="form" data-form="politician-new">${personFields({ status: "incoming", term_end: "2029-01-03", next_election: "2028-11-07" })}<div class="actions"><button class="btn primary">Add person</button></div></form>`;
 	}
+	queueMicrotask(() => { if (tab === "photomoney" && S.pmId) loadPhotoMoney(S.pmId); });
 	app.innerHTML = `${chrome()}<main class="wrap">
 		<div class="tabs" role="tablist">${tabs.map(([k, l]) => `<button role="tab" aria-selected="${k === tab}" data-tab="${k}">${l}</button>`).join("")}</div>
 		${body}
@@ -178,6 +258,13 @@ export function bindAdmin() {
 		if (kind === "poll") return save(() => api("admin/issue_polls" + (id ? "/" + encodeURIComponent(id) : ""), { method: id ? "PUT" : "POST", body: b }), id ? "Poll saved" : "Poll added");
 		if (kind === "keyvote") return save(() => api("admin/key_votes/" + encodeURIComponent(id), { method: "PUT", body: { ...b, hidden: b.hidden === "1" } }), "Vote saved");
 		if (kind === "donor") return save(() => api("admin/donors", { method: "POST", body: b }), "Donor saved");
+		if (kind === "photolink") return save(() => api("admin/politicians/" + encodeURIComponent(id), { method: "PUT", body: { photo_url: b.photo_url } }), "Photo saved").then(() => loadPhotoMoney(id));
+		if (kind === "money") {
+			const values = {};
+			for (const [k, v] of Object.entries(b)) if (k.startsWith("m:") && v !== "") values[k.slice(2)] = v;
+			if (!Object.keys(values).length) return toast("Fill in at least one amount", true);
+			return save(() => api("admin/finance/" + encodeURIComponent(id), { method: "PUT", body: { values, note: b.note, source_url: b.source_url } }), "Money figures saved").then(() => loadPhotoMoney(id));
+		}
 		if (kind === "politician-edit") return save(() => api("admin/politicians/" + encodeURIComponent(id), { method: "PUT", body: b }), "Profile saved");
 		if (kind === "politician-new") return save(async () => { const r = await api("admin/politicians", { method: "POST", body: b }); location.hash = "#/p/" + encodeURIComponent(r.id); }, "Person added", false);
 		if (kind === "outlet" || kind === "policy") {
@@ -189,6 +276,21 @@ export function bindAdmin() {
 		const tab = e.target.closest("[data-tab]");
 		if (tab && tab.dataset.tab === "issues") { location.hash = "#/issues"; return; }
 		if (tab) { S.adminTab = tab.dataset.tab; renderAdmin(); return; }
+		if (e.target.closest("[data-logo-apply]")) {
+			const choice = document.querySelector('input[name="logo"]:checked')?.value;
+			return save(() => api("admin/logo", { method: "PUT", body: { choice } }), "Logo applied");
+		}
+		const pr = e.target.closest("[data-photo-reset]");
+		if (pr) {
+			const id = pr.dataset.photoReset;
+			return save(() => api("admin/photo/" + encodeURIComponent(id), { method: "DELETE" }), "Photo reset").then(() => loadPhotoMoney(id));
+		}
+		const mr = e.target.closest("[data-money-reset]");
+		if (mr) {
+			if (!confirm("Remove every hand-set money figure for this person and go back to the FEC data?")) return;
+			const id = mr.dataset.moneyReset;
+			return save(() => api("admin/finance/" + encodeURIComponent(id), { method: "DELETE" }), "Back to FEC data").then(() => loadPhotoMoney(id));
+		}
 		const del = e.target.closest("[data-del]");
 		if (del) {
 			e.preventDefault();
@@ -202,6 +304,15 @@ export function bindAdmin() {
 	});
 	document.addEventListener("change", (e) => {
 		const t = e.target;
+		if (t.id === "pmpick") {
+			const pid = t.value.split(" · ").pop();
+			if (S.data.politicians.some((p) => p.id === pid)) { S.pmPick = t.value; S.pmId = pid; loadPhotoMoney(pid); }
+		}
+		if (t.dataset.photoUpload && t.files?.[0]) {
+			const id = t.dataset.photoUpload;
+			shrink(t.files[0]).then((data) => save(() => api("admin/photo/" + encodeURIComponent(id), { method: "PUT", body: { data } }), "Photo uploaded"))
+				.then(() => loadPhotoMoney(id)).catch((err) => toast(err.message, true));
+		}
 		if (t.name === "outlet_id") { const box = $(".newoutlet", t.closest("form")); if (box) box.hidden = t.value !== "__new"; }
 		if (t.dataset.quick) {
 			const cur = S.pos.get(t.dataset.quick);

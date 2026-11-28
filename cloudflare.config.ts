@@ -11,7 +11,7 @@ export default defineConfig({
 		workersDev: true, // keep the workers.dev address for health checks and the scheduled refresh
 		assets: {
 			notFoundHandling: "single-page-application",
-			runWorkerFirst: ["/api/*", "/m/*", "/p/*", "/changes.xml"],
+			runWorkerFirst: ["/api/*", "/m/*", "/p/*", "/changes.xml", "/favicon.svg", "/favicon.ico", "/icon-*", "/apple-touch-icon.png", "/site.webmanifest", "/logo/*"],
 		},
 		env: {
 			DB: bindings.d1({ name: "who-stands-in-the-way" }),
