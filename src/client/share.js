@@ -19,7 +19,7 @@ const SERIF = '"Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif'
 const SANS = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 const money = (n) => "$" + Math.round(n || 0).toLocaleString("en-US");
 
-export const shareUrl = (id) => `${location.origin}/m/${encodeURIComponent(id)}`;
+export const shareUrl = (id) => `${location.origin}/p/${encodeURIComponent(id)}`;
 
 function loadImage(src) {
 	return new Promise((resolve) => {

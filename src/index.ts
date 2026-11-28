@@ -510,34 +510,60 @@ async function cardImage(req, env, ctx, id) {
 	ctx.waitUntil(cache.put(key, res.clone()));
 	return res;
 }
-async function sharePage(req, env, id) {
-	const origin = new URL(req.url).origin;
-	const p = await cardData(env, id);
-	const target = p ? `${origin}/#/p/${encodeURIComponent(p.id)}` : `${origin}/`;
-	const where = p ? (p.chamber === "senate" ? `Senator, ${p.state}` : p.chamber === "house" ? `${p.state}-${p.district || "AL"}` : p.role) : "";
-	const title = p ? `${p.name} ${STANCE_LINE[p.stance || "unknown"]}` : "Who Stands In The Way";
+// Title, description and preview image for one person's page.
+async function shareMeta(origin, p) {
+	const where = p.chamber === "senate" ? `Senator, ${p.state}` : p.chamber === "house" ? `${p.state}-${p.district || "AL"}` : p.role;
+	const title = `${p.name} ${STANCE_LINE[p.stance || "unknown"]}`;
 	const money = (n) => "$" + Math.round(n || 0).toLocaleString("en-US");
 	const bits = [];
-	if (p && (p.health || 0) > 0) bits.push(`${money(p.health)} from health-industry ${p.state_money ? "donors" : "PACs"}`);
-	if (p && (p.emp || 0) > 0) bits.push(`${money(p.emp)} from health-industry employees`);
-	const desc = p ? `${p.party}-${where}. ${bits.join(" · ")}${bits.length ? ". " : ""}${p.phone ? `Call ${p.phone}. ` : ""}See the record and who funds them.`
-		: "Where every member of Congress stands on Medicare for All.";
-	const image = p ? `${origin}/m/${encodeURIComponent(p.id)}.png?v=${await cardVersion(p)}` : `${origin}/og.png`;
-	const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<title>${esc(title)}</title>
-<meta name="description" content="${esc(desc)}">
+	if ((p.health || 0) > 0) bits.push(`${money(p.health)} from health-industry ${p.state_money ? "donors" : "PACs"}`);
+	if ((p.emp || 0) > 0) bits.push(`${money(p.emp)} from health-industry employees`);
+	const desc = `${p.party}-${where}. ${bits.join(" · ")}${bits.length ? ". " : ""}${p.phone ? `Call ${p.phone}. ` : ""}See the record and who funds them.`;
+	const url = `${origin}/p/${encodeURIComponent(p.id)}`;
+	const image = `${origin}/m/${encodeURIComponent(p.id)}.png?v=${await cardVersion(p)}`;
+	const tags = `<meta name="description" content="${esc(desc)}">
 <meta property="og:type" content="profile"><meta property="og:site_name" content="Who Stands In The Way">
 <meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(desc)}">
-<meta property="og:url" content="${esc(origin + "/m/" + encodeURIComponent(id))}">
+<meta property="og:url" content="${esc(url)}"><link rel="canonical" href="${esc(url)}">
 <meta property="og:image" content="${esc(image)}"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="${esc(title)}">
 <meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="${esc(title)}">
-<meta name="twitter:description" content="${esc(desc)}"><meta name="twitter:image" content="${esc(image)}">
-<meta http-equiv="refresh" content="0;url=${esc(target)}"><link rel="canonical" href="${esc(target)}">
+<meta name="twitter:description" content="${esc(desc)}"><meta name="twitter:image" content="${esc(image)}">`;
+	return { title, url, tags };
+}
+
+// /p/<id>: the app itself, with the person's preview tags in place of the site-wide ones.
+async function profilePage(req, env, id) {
+	const origin = new URL(req.url).origin;
+	const [p, shell] = await Promise.all([cardData(env, id), env.ASSETS.fetch(new Request(origin + "/"))]);
+	if (!p) return new Response(shell.body, { status: 404, headers: shell.headers });
+	const m = await shareMeta(origin, p);
+	const drop = { element: (e) => e.remove() };
+	const res = new HTMLRewriter()
+		.on('meta[property^="og:"], meta[name^="twitter:"], meta[name="description"], link[rel="canonical"]', drop)
+		.on("title", { element: (e) => e.setInnerContent(m.title) })
+		.on("head", { element: (e) => e.append(m.tags, { html: true }) })
+		.transform(shell);
+	const headers = new Headers(res.headers);
+	headers.set("cache-control", "public, max-age=300");
+	headers.delete("etag");
+	return new Response(res.body, { status: 200, headers });
+}
+
+// /m/<id>: older share links. Same preview tags, then on to /p/<id>.
+async function sharePage(req, env, id) {
+	const origin = new URL(req.url).origin;
+	const p = await cardData(env, id);
+	if (!p) return Response.redirect(origin + "/", 302);
+	const m = await shareMeta(origin, p);
+	const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>${esc(m.title)}</title>
+${m.tags}
+<meta http-equiv="refresh" content="0;url=${esc(m.url)}">
 </head><body style="font-family:system-ui;background:#111214;color:#f1f0ec;padding:40px">
-<p>${esc(title)}. <a style="color:#7fd3c4" href="${esc(target)}">Open the profile</a>.</p>
-<script>location.replace(${JSON.stringify(target)})</script></body></html>`;
-	return new Response(html, { status: p ? 200 : 404, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=300" } });
+<p>${esc(m.title)}. <a style="color:#7fd3c4" href="${esc(m.url)}">Open the profile</a>.</p>
+<script>location.replace(${JSON.stringify(m.url)})</script></body></html>`;
+	return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=300" } });
 }
 
 // ---------------------------------------------------------------- RSS feed of changes: /changes.xml
@@ -566,7 +592,7 @@ async function changesFeed(req, env) {
 	const rows = (await env.DB.prepare(`SELECT c.*, p.name AS politician_name FROM changes c LEFT JOIN politicians p ON p.id = c.politician_id
 		WHERE c.hidden = 0 ORDER BY c.at DESC, c.id DESC LIMIT 60`).all()).results;
 	const items = rows.map((c) => {
-		const link = c.politician_id ? `${origin}/m/${encodeURIComponent(c.politician_id)}` : `${origin}/#/changes`;
+		const link = c.politician_id ? `${origin}/p/${encodeURIComponent(c.politician_id)}` : `${origin}/#/changes`;
 		const desc = [c.note, c.source_url ? `Source: ${c.source_url}` : "", c.actor === "data update" ? "(from a data update)" : ""].filter(Boolean).join(" ");
 		return `<item><title>${esc(describeChange(c))}</title><link>${esc(link)}</link><guid isPermaLink="false">change-${c.id}</guid><pubDate>${new Date(c.at).toUTCString()}</pubDate>${desc ? `<description>${esc(desc)}</description>` : ""}</item>`;
 	}).join("");
@@ -592,6 +618,11 @@ export default {
 				catch (e) { console.error("card", id, String(e?.stack || e)); return Response.redirect(`${url.origin}/og.png`, 302); }
 			}
 			return sharePage(req, env, id);
+		}
+		if (url.pathname.startsWith("/p/")) {
+			ready ??= init(env.DB).catch((e) => { ready = null; throw e; });
+			await ready;
+			return profilePage(req, env, decodeURIComponent(url.pathname.slice(3)).split("/")[0]);
 		}
 		if (!url.pathname.startsWith("/api/")) return new Response("Not found", { status: 404 });
 		try {

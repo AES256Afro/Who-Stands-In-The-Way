@@ -11,10 +11,12 @@ export default defineConfig({
 		workersDev: true, // keep the workers.dev address for health checks and the scheduled refresh
 		assets: {
 			notFoundHandling: "single-page-application",
-			runWorkerFirst: ["/api/*", "/m/*", "/changes.xml"],
+			runWorkerFirst: ["/api/*", "/m/*", "/p/*", "/changes.xml"],
 		},
 		env: {
 			DB: bindings.d1({ name: "who-stands-in-the-way" }),
+			// The app shell, which /p/<id> serves with that person's link-preview tags.
+			ASSETS: bindings.assets(),
 			// Admin password. Local: .dev.vars. Production: cf deploy --secrets-file
 			ADMIN_PASSWORD: bindings.secret(),
 			// X_BEARER_TOKEN (optional) is deliberately not declared: a declared secret is required and would

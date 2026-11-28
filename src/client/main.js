@@ -335,6 +335,7 @@ async function openProfile(id) {
 	const dlg = $("#drawer");
 	let d;
 	try { d = await api("politicians/" + encodeURIComponent(id)); } catch (e) { toast(e.message, true); location.hash = "#/"; return; }
+	document.title = `${d.politician.name} | Who Stands In The Way`;
 	const p = d.politician, f = d.finance;
 	const pos = Object.fromEntries(d.positions.map((x) => [x.policy_id, x]));
 	const link = (href, label) => (href ? `<a class="btn small" href="${url(href)}" target="_blank" rel="noopener">${h(label)} ↗</a>` : "");
@@ -458,10 +459,17 @@ export async function refresh(keepProfile) {
 }
 
 // ------------------------------------------------------------------ routing + events
+// Profiles live at /p/<id> so a copied address previews as that person's card; every other page is a
+// hash route. Links still say #/p/<id>; route() swaps the address to /p/<id> once the profile opens.
+export const curHash = () => location.hash || (location.pathname.match(/^\/p\/[^/]+/) ? "#" + location.pathname : "#/");
 function route() {
-	const hash = location.hash || "#/";
+	const hash = curHash();
 	const dlg = $("#drawer");
 	const m = hash.match(/^#\/p\/(.+)$/);
+	const want = m ? "/p/" + m[1] : "/" + (hash === "#/" ? "" : hash);
+	if (location.pathname + location.hash !== want) history.replaceState(history.state, "", want);
+	route.url = location.href;
+	if (!m) document.title = "Who Stands In The Way";
 	// A profile opens as a drawer over whatever page was showing; other hashes pick the page.
 	const page = m ? route.back || "#/" : hash;
 	if (!m) route.back = hash;
@@ -499,7 +507,7 @@ function bind() {
 		const el = t.closest("[data-id]");
 		if (el && !t.closest("form")) location.hash = "#/p/" + encodeURIComponent(el.dataset.id);
 	});
-	$("#drawer").addEventListener("close", () => { if (location.hash.startsWith("#/p/")) location.hash = route.back || "#/"; });
+	$("#drawer").addEventListener("close", () => { if (curHash().startsWith("#/p/")) location.hash = route.back || "#/"; });
 	$("#drawer").addEventListener("click", (e) => { if (e.target === e.currentTarget) location.hash = route.back || "#/"; });
 	document.addEventListener("input", (e) => {
 		const t = e.target;
@@ -524,7 +532,10 @@ function bind() {
 		tip.style.left = Math.min(Math.max(r.left + r.width / 2 - tip.offsetWidth / 2, 8), innerWidth - tip.offsetWidth - 8) + "px";
 		tip.style.top = (r.top - tip.offsetHeight - 8 < 0 ? r.bottom + 8 : r.top - tip.offsetHeight - 8) + "px";
 	});
-	window.addEventListener("hashchange", route);
+	// Going back to a /p/<id> entry may fire popstate, hashchange or both; route once per address.
+	const nav = () => { if (location.href !== route.url) route(); };
+	window.addEventListener("hashchange", nav);
+	window.addEventListener("popstate", nav);
 	bindAdmin();
 	bindViews();
 	bindZip();
