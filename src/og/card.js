@@ -81,6 +81,15 @@ export async function renderCard(p, host) {
 	if (p.health > 0) facts.push(`${money(p.health)} from health-industry ${donors}`);
 	if (p.emp > 0) facts.push(`${money(p.emp)} from health-industry employees`);
 	if (!facts.length && p.raised > 0) facts.push(`${money(p.raised)} raised in ${p.state_money ? "their latest campaign" : "2025-26"}`);
+	if (p.chamber === "house" || p.chamber === "senate") {
+		const a = (() => { try { return JSON.parse(p.aipac || "null"); } catch { return null; } })() || {};
+		const helped = (a.direct || 0) + (a.earmarked || 0) + (a.udp_support || 0), against = a.udp_oppose || 0;
+		const bits = [];
+		if (helped > 0) bits.push(`${money(helped)} from AIPAC${a.udp_support > 0 ? " and its super PAC" : ""}`);
+		if (against > 0) bits.push(`${money(against)} spent against them by AIPAC's super PAC`);
+		facts.push(bits.join(" · ") || "No AIPAC money");
+	}
+	const tight = facts.length > 2;
 	const nameSize = p.name.length > 26 ? 44 : p.name.length > 18 ? 50 : 56;
 	const src = (st === "unknown" ? "No public position found yet." : "Sources on the profile.")
 		+ (p.state_money ? " State campaign finance records." : " FEC data, 2025-26 cycle.");
@@ -99,7 +108,7 @@ export async function renderCard(p, host) {
 					el("div", { marginTop: 10, fontSize: 26, fontWeight: 600, color: C[p.party] || C.ink2 }, `${PARTY[p.party] || p.party || ""} · ${role}`),
 					el("div", { marginTop: 20, background: C[st], borderRadius: 14, padding: "16px 24px", fontSize: HEADLINE[st].length > 34 ? 32 : 40, fontWeight: 800, color: "#ffffff" }, HEADLINE[st]),
 					el("div", { flexDirection: "column", marginTop: 22 },
-						facts.map((t) => el("div", { fontSize: 28, fontWeight: 600, marginBottom: 8 }, t)),
+						facts.map((t) => el("div", { fontSize: tight ? 25 : 28, fontWeight: 600, marginBottom: tight ? 5 : 8 }, t)),
 						p.phone ? el("div", { fontSize: 30, fontWeight: 600, color: C.supports, marginTop: 4 }, `Call: ${p.phone}`) : null)))),
 		el("div", { flexDirection: "column", padding: "0 56px 40px 56px" },
 			el("div", { fontSize: 17, color: C.ink3 }, src),

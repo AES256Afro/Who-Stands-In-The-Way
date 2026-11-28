@@ -2,6 +2,7 @@
 // current stance and figures. Landscape (1200x630) for X/Facebook/link previews, square (1080x1080) for
 // Instagram. On phones the system share sheet is used when it can take files; otherwise it downloads.
 import { S, api, toast, h, STANCE, PARTY, seat } from "./main.js";
+import { aipacLine } from "./badges.js";
 
 const COLORS = {
 	bg: "#111214", panel: "#1a1b1e", ink: "#f1f0ec", ink2: "#b9bbc1", ink3: "#8a8d95", line: "#2f3136",
@@ -125,9 +126,14 @@ async function draw(d, square) {
 	if (pacs > 0) facts.push(`${money(pacs)} from health-industry PACs`);
 	if (emp > 0) facts.push(`${money(emp)} from health-industry employees`);
 	if (!facts.length && f.totals) facts.push(`${money(f.totals.receipts)} raised in 2025–26`);
+	const aipac = aipacLine({ ...p, aipac: f.israel?.aipac || null }, money);
+	if (aipac) facts.push(aipac);
 	let fy = by + bh + (square ? 84 : 46);
-	ctx.font = `600 ${square ? 42 : 28}px ${SANS}`; ctx.fillStyle = COLORS.ink;
-	for (const line of facts) { ctx.fillText(line, square ? pad : tx, fy); fy += square ? 62 : 38; }
+	const tight = !square && facts.length > 2;
+	ctx.font = `600 ${square ? 42 : tight ? 25 : 28}px ${SANS}`; ctx.fillStyle = COLORS.ink;
+	for (const line of facts) {
+		for (const l of wrap(ctx, line, square ? W - pad * 2 : tw)) { ctx.fillText(l, square ? pad : tx, fy); fy += square ? 62 : tight ? 33 : 38; }
+	}
 	if (p.phone) {
 		ctx.font = `700 ${square ? 50 : 30}px ${SANS}`; ctx.fillStyle = COLORS.supports;
 		ctx.fillText(`Call: ${p.phone}`, square ? pad : tx, fy + (square ? 22 : 4));

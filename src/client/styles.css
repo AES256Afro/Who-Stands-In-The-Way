@@ -368,3 +368,5 @@ h4.mini small { text-transform: none; letter-spacing: 0; font-weight: 400; }
 .chip .dot { margin-right: 4px; }
 textarea[name="data"] { width: 100%; font: 12px/1.4 ui-monospace, monospace; }
 @media (max-width: 560px) { .tl li { grid-template-columns: 1fr; gap: 2px; } }
+.linkish { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; text-decoration: underline; text-decoration-color: var(--line, currentColor); text-underline-offset: 3px; text-align: left; }
+.aipac-line { margin-top: 4px; }

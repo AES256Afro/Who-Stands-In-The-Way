@@ -487,12 +487,12 @@ async function cardData(env, id) {
 		COALESCE(json_extract(f.data,'$.health_total'),0) + COALESCE((SELECT SUM(json_extract(value,'$.health_total'))
 			FROM json_each(json_extract(f.data,'$.leadership'))),0) AS health, json_extract(f.data,'$.employees.total') AS emp,
 		COALESCE(json_extract(f.data,'$.totals.receipts'), json_extract(f.data,'$.total')) AS raised,
-		json_extract(f.data,'$.state') AS state_money
+		json_extract(f.data,'$.state') AS state_money, json_extract(f.data,'$.israel.aipac') AS aipac
 		FROM politicians p LEFT JOIN finance f ON f.politician_id = p.id WHERE p.id = ?`).bind(id).first();
 }
 // Changes whenever anything drawn on the card changes, so previews refetch instead of showing a stale card.
 const cardVersion = async (p) => {
-	const key = [p.name, p.role, p.party, p.stance, p.health, p.emp, p.raised, p.phone, p.photo_url, p.chamber, p.district, p.sdistrict].join("|");
+	const key = [p.name, p.role, p.party, p.stance, p.health, p.emp, p.raised, p.phone, p.photo_url, p.chamber, p.district, p.sdistrict, p.aipac].join("|");
 	const d = new Uint8Array(await crypto.subtle.digest("SHA-1", new TextEncoder().encode(key)));
 	return [...d.slice(0, 5)].map((b) => b.toString(16).padStart(2, "0")).join("");
 };

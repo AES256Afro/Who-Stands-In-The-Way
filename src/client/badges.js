@@ -49,14 +49,26 @@ export function aipacOf(p) {
 	return { ...a, given, helped: given + (a.udp_support || 0) };
 }
 
-export function aipacBadge(p) {
+// own: false leaves out the AIPAC tags, for places that show aipacLine() instead.
+export function aipacBadge(p, { own = true } = {}) {
 	const a = aipacOf(p);
 	const out = [];
-	if (a?.helped > 0) out.push(`<span class="tag aipac" title="AIPAC PAC direct gifts, donations routed through AIPAC's PAC, and its super PAC United Democracy Project's ads for them (FEC, 2025–26)">AIPAC ${short(a.helped)}</span>`);
-	if (a?.udp_oppose > 0) out.push(`<span class="tag aipac-against" title="AIPAC's super PAC United Democracy Project spent this on ads against them (FEC, 2025–26)">AIPAC spent ${short(a.udp_oppose)} against</span>`);
+	if (own && a?.helped > 0) out.push(`<span class="tag aipac" title="AIPAC PAC direct gifts, donations routed through AIPAC's PAC, and its super PAC United Democracy Project's ads for them (FEC, 2025–26)">AIPAC ${short(a.helped)}</span>`);
+	if (own && a?.udp_oppose > 0) out.push(`<span class="tag aipac-against" title="AIPAC's super PAC United Democracy Project spent this on ads against them (FEC, 2025–26)">AIPAC spent ${short(a.udp_oppose)} against</span>`);
 	const other = (p.israel_for || 0) - (a?.helped || 0);
 	if (other >= 1000) out.push(`<span class="tag" title="Other pro-Israel PACs and groups (not AIPAC): direct gifts, routed donations and ads for them">Other pro-Israel ${short(other)}</span>`);
 	return out.join("");
+}
+
+// One line for cards: what AIPAC gave or spent for them, what its super PAC spent against them, or none.
+// Members of Congress only; AIPAC's committees are federal and don't fund state races.
+export function aipacLine(p, fmt = money) {
+	if (p?.chamber !== "house" && p?.chamber !== "senate") return "";
+	const a = aipacOf(p) || { helped: 0, udp_support: 0, udp_oppose: 0 };
+	const out = [];
+	if (a.helped > 0) out.push(`${fmt(a.helped)} from AIPAC${a.udp_support > 0 ? " and its super PAC" : ""}`);
+	if (a.udp_oppose > 0) out.push(`${fmt(a.udp_oppose)} spent against them by AIPAC's super PAC`);
+	return out.join(" · ") || "No AIPAC money";
 }
 
 const LEVEL = { low: "Low", moderate: "Moderate", high: "High", very_high: "Very high" };
@@ -64,13 +76,14 @@ const LEVEL = { low: "Low", moderate: "Moderate", high: "High", very_high: "Very
 export function hoverCard(p) {
 	const st = stanceOf(p.id);
 	const badges = caucusBadges(p, { max: 4 });
-	const aipac = aipacBadge(p);
+	const aipac = aipacBadge(p, { own: !aipacLine(p) });
 	const money_ = [p.health_total > 0 ? `${short(p.health_total)} health-industry PACs` : "", p.health_emp > 0 ? `${short(p.health_emp)} health-industry employees` : ""].filter(Boolean).join(" · ");
 	return `<div class="hc-stance" style="--stance:var(--s-${st})"><span>Medicare for All</span><b>${h(STANCE[st])}</b></div>
 		<div class="hc-name"><b>${h(p.name)}</b> <span>${h(p.party)}-${h(seat(p))}</span></div>
 		${badges ? `<div class="hc-tags">${badges}</div>` : ""}
 		${aipac ? `<div class="hc-tags">${aipac}</div>` : ""}
 		${money_ ? `<div class="hc-line">${money_}</div>` : ""}
+		${aipacLine(p) ? `<div class="hc-line">${h(aipacLine(p, short))}</div>` : ""}
 		${p.align && p.align !== "low" ? `<div class="hc-line">Health money–vote alignment: <b>${h(LEVEL[p.align])}</b></div>` : ""}
 		<div class="hc-foot">Click for the full profile</div>`;
 }
@@ -78,7 +91,7 @@ export function hoverCard(p) {
 // ---------------------------------------------------------------- profile sections
 export function israelSection(f) {
 	const x = f?.israel;
-	if (!x) return `<h3>AIPAC and pro-Israel groups</h3><p class="note">No money from AIPAC, its super PAC or other pro-Israel PACs found for this cycle.</p>`;
+	if (!x) return `<h3 id="aipac">AIPAC and pro-Israel groups</h3><p class="note">No money from AIPAC, its super PAC or other pro-Israel PACs found for this cycle.</p>`;
 	const a = x.aipac;
 	const fec = (id) => `https://www.fec.gov/data/committee/${id}/`;
 	const rows = [
@@ -88,7 +101,7 @@ export function israelSection(f) {
 		...x.other.map((o) => [o.name, o.amount, 0, o.id]),
 		...x.other_outside.map((o) => [`${o.name}, ads`, o.support, o.oppose, o.id]),
 	].filter((r) => r[1] > 0 || r[2] > 0);
-	return `<h3>AIPAC and pro-Israel groups <small>FEC, 2025–26</small></h3>
+	return `<h3 id="aipac">AIPAC and pro-Israel groups <small>FEC, 2025–26</small></h3>
 		<div class="kv"><div><b>${money(a.direct + a.earmarked + a.udp_support)}</b><span>From or spent for them by AIPAC</span></div>
 			${a.udp_oppose ? `<div><b>${money(a.udp_oppose)}</b><span>Spent against them by AIPAC's super PAC</span></div>` : ""}
 			<div><b>${money(x.for - (a.direct + a.earmarked + a.udp_support))}</b><span>Other pro-Israel PACs and groups</span></div></div>

@@ -2,7 +2,7 @@ import { renderAdmin, adminProfileTools, bindAdmin } from "./admin.js";
 import { shareButtons, bindShare } from "./share.js";
 import { renderMoney, alignmentBox, moneyWeb, votingRecord, bindMoney } from "./money.js";
 import { xSection, bindX } from "./xposts.js";
-import { caucusBadges, aipacBadge, hoverCard, israelSection, matrixBox } from "./badges.js";
+import { caucusBadges, aipacBadge, aipacLine, hoverCard, israelSection, matrixBox } from "./badges.js";
 import { renderChanges, profileHistory, recentStrip, bindChanges } from "./changes.js";
 import { renderStates, renderState, bindStates, stateName } from "./states.js";
 import { agendaHtml, bindAgenda, renderFocus, bindFocus } from "./focus.js";
@@ -386,7 +386,8 @@ async function openProfile(id) {
 	dlg.innerHTML = `<div class="dhead">${avatar(p)}
 			<div style="flex:1"><h2>${h(p.name)}</h2><div class="meta"><span class="party ${h(p.party)}">${h(PARTY[p.party] || p.party)}</span> · ${state ? h(seat(p)) : h(p.role) + (p.chamber === "executive" ? "" : " · " + h(seat(p)))}${p.status === "incoming" ? " · new in 2027" : ""}</div>
 				<div class="meta">${p.status === "departing" ? "Leaving Congress January 3, 2027" : `${p.term_end ? `Serving ${p.status === "incoming" || p.chamber === "house" ? "Jan 3, 2027" : "now"} – ${h(fmtDate(p.term_end))}` : ""}${p.next_election ? ` · <b>next election ${h(fmtDate(p.next_election))}</b>` : ""}`}</div>
-				${(() => { const b = caucusBadges(S.byId?.get(p.id) || p, { links: true }) + aipacBadge(S.byId?.get(p.id) || p); return b ? `<div class="rtags dtags">${b}</div>` : ""; })()}</div>
+				${(() => { const r = S.byId?.get(p.id) || p, b = caucusBadges(r, { links: true }) + aipacBadge(r, { own: !aipacLine(r) }); return b ? `<div class="rtags dtags">${b}</div>` : ""; })()}
+				${(() => { const l = aipacLine(S.byId?.get(p.id) || p); return l ? `<div class="meta aipac-line"><button type="button" class="linkish" data-jump="aipac" title="Jump to the AIPAC breakdown">${h(l)}</button></div>` : ""; })()}</div>
 			<div class="links dact">${callBtn(p, "btn primary call")}<button class="btn" data-close aria-label="Close">Close</button></div></div>
 		<div class="dbody">
 			${shareButtons(p.id)}
@@ -501,6 +502,8 @@ function bind() {
 		const cg = t.closest("[data-congress]");
 		if (cg) { S.congress = Number(cg.dataset.congress); S.mapState = ""; S.f.cohort = ""; applyCongress(); renderMain(); return; }
 		if (t.closest("[data-logout]")) { e.preventDefault(); await api("logout", { method: "POST" }); toast("Signed out"); markDirty(); await refresh(); return; }
+		const jump = t.closest("[data-jump]");
+		if (jump) { $("#drawer #" + jump.dataset.jump)?.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
 		if (t.closest("[data-close]")) { location.hash = route.back || "#/"; return; }
 		const del = t.closest("[data-del]");
 		if (del) return; // handled in admin.js
