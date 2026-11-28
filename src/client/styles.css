@@ -396,3 +396,13 @@ textarea[name="data"] { width: 100%; font: 12px/1.4 ui-monospace, monospace; }
 .logo-opt small { color: var(--ink-2); }
 .tip.tip-pic { padding: 0; overflow: hidden; width: auto; max-width: none; }
 .tip.tip-pic img { display: block; width: 420px; height: auto; }
+.pageh { font: 700 34px/1.1 var(--serif); margin: 22px 0 8px; }
+.infl { margin: 16px 0; }
+.infl h3.mini { margin-top: 16px; }
+.infl-bars { display: grid; gap: 8px; margin: 8px 0; }
+.infl-row { display: grid; grid-template-columns: minmax(150px, 230px) 1fr 48px; gap: 12px; align-items: center; }
+.infl-row small { color: var(--ink-3); }
+.infl-bar { height: 14px; background: var(--surface-2); border-radius: 7px; overflow: hidden; }
+.infl-bar i { display: block; height: 100%; background: var(--s-opposes); border-radius: 7px; }
+.infl-row b { text-align: right; font-variant-numeric: tabular-nums; }
+@media (max-width: 600px) { .infl-row { grid-template-columns: 1fr 40px; } .infl-row .infl-bar { grid-column: 1 / -1; grid-row: 2; } }

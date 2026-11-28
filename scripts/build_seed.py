@@ -252,6 +252,14 @@ def israel_for(fec_ids, gifts, spend):
     return out if out["for"] or out["against"] else None
 
 
+from industries import industry_of, INDUSTRY_LABEL  # noqa: E402
+# Pro-Israel committees: Track AIPAC's list (66 committees) plus the ones named above.
+PRO_ISRAEL_IDS = {AIPAC_PAC, UDP, *PRO_ISRAEL}
+_tap = RAW / "research" / "trackaipac_pacs.csv"
+if _tap.exists():
+    PRO_ISRAEL_IDS |= {r["ID"].strip() for r in csv.DictReader(open(_tap)) if r["ID"].strip()}
+
+
 def finance_for(fec_ids, opensecrets):
     rows = [weball[i] for i in fec_ids if i in weball]
     rows = [r for r in rows if num(r["TTL_RECEIPTS"]) or num(r["TTL_DISB"]) or num(r["COH_COP"])]
@@ -304,6 +312,23 @@ def finance_for(fec_ids, opensecrets):
     out["outside"] = {"support": round(sum(t["support"] for t in sp), 2),
                       "oppose": round(sum(t["oppose"] for t in sp), 2),
                       "count": len(sp), "top": sp[:12]}
+    # Money by industry: PAC gifts plus super PAC and other outside spending (scripts/industries.py).
+    ind = collections.defaultdict(lambda: {"pacs": 0.0, "outside_for": 0.0, "outside_against": 0.0, "top": collections.defaultdict(float)})
+    for it in items:
+        k = industry_of(it["name"], it["org"], it["sector"], it["id"] in PRO_ISRAEL_IDS)
+        if k:
+            ind[k]["pacs"] += it["amount"]
+            ind[k]["top"][it["name"]] += it["amount"]
+    for t in sp:
+        k = industry_of(t["name"], cm.get(t["id"], {}).get("org", ""), t["sector"], t["id"] in PRO_ISRAEL_IDS)
+        if k:
+            ind[k]["outside_for"] += t["support"]
+            ind[k]["outside_against"] += t["oppose"]
+            if t["support"]:
+                ind[k]["top"][t["name"]] += t["support"]
+    out["industries"] = {k: {"pacs": round(v["pacs"], 2), "outside_for": round(v["outside_for"], 2), "outside_against": round(v["outside_against"], 2),
+                             "top": [[n, round(a, 2)] for n, a in sorted(v["top"].items(), key=lambda x: -x[1])[:5]]}
+                         for k, v in ind.items()}
     isr = israel_for(fec_ids, gifts, spend)
     if isr:
         out["israel"] = isr
@@ -717,28 +742,36 @@ sector_votes = []
 _sv = ROOT / "scripts" / "sector_votes.json"
 if _sv.exists() and (_vv / "HS119_votes.csv").exists():
     sector_votes = json.load(open(_sv, encoding="utf-8"))
-    want = {("Senate" if v["chamber"] == "senate" else "House", str(v["rollnumber"])): v for v in sector_votes}
+    # One roll call can matter to several industries (a reconciliation bill, an arms sale).
+    want = collections.defaultdict(list)
+    for v in sector_votes:
+        want[("Senate" if v["chamber"] == "senate" else "House", str(v["rollnumber"]))].append(v)
     svotes = collections.defaultdict(dict)  # bioguide -> vote id -> yea/nay/...
     with open(_vv / "HS119_votes.csv", encoding="utf-8", newline="") as fh:
         for row in csv.DictReader(fh):
-            v = want.get((row["chamber"], row["rollnumber"]))
-            if not v:
+            vs = want.get((row["chamber"], row["rollnumber"]))
+            if not vs:
                 continue
             bio = icpsr_bio.get((row["chamber"], row["icpsr"]))
             if bio:
                 code = int(float(row["cast_code"]))
-                svotes[bio][v["id"]] = "yea" if code in (1, 2, 3) else "nay" if code in (4, 5, 6) else "present" if code == 7 else "not_voting"
+                for v in vs:
+                    svotes[bio][v["id"]] = "yea" if code in (1, 2, 3) else "nay" if code in (4, 5, 6) else "present" if code == 7 else "not_voting"
     GROUP_PAC = {"pharma": "pharma", "insurers": "insurance", "hospitals": "hospitals"}
 
     def group_money(d, g):
         if g == "pro_israel":
             return d.get("israel", {}).get("for", 0)
+        if g not in GROUP_PAC:  # other industries: PAC gifts plus outside spending for them
+            x = d.get("industries", {}).get(g, {})
+            return x.get("pacs", 0) + x.get("outside_for", 0)
         k = GROUP_PAC[g]
         lead = sum(l.get("health_sectors", {}).get(k, 0) for l in d.get("leadership", []))
         emp = d.get("employees", {}).get("sectors", {}).get(k, 0) if g != "hospitals" else 0
         return d.get("health_sectors", {}).get(k, 0) + lead + emp
 
-    groups = [g for g in ("pharma", "insurers", "hospitals", "pro_israel") if any(v["sector"] == g for v in sector_votes)]
+    GROUP_ORDER = ("pharma", "insurers", "hospitals", "pro_israel", "defense", "fossil_fuels", "wall_street", "crypto", "tech", "guns", "real_estate", "labor")
+    groups = [g for g in GROUP_ORDER if any(v["sector"] == g for v in sector_votes)]
     want_side = {v["id"]: v["industry_side"] for v in sector_votes}
     chamber_by = {p["id"]: p["chamber"] for p in politicians if p["chamber"] in ("house", "senate")}
     gpools = collections.defaultdict(list)
@@ -760,7 +793,7 @@ if _sv.exists() and (_vv / "HS119_votes.csv").exists():
             with_ = sum(1 for i, x in cast_ if x == want_side[i])
             m_ = group_money(d, g)
             pool = gpools[(ch, g)]
-            pc = round(100 * sum(1 for v in pool if v < m_) / len(pool)) if pool and m_ > 0 else 0
+            pc = min(99, round(100 * sum(1 for v in pool if v < m_) / len(pool))) if pool and m_ > 0 else 0
             if len(cast_) < 2:  # one vote is too little to rate
                 level = "none"
             elif m_ <= 0 or with_ / len(cast_) <= 0.5:  # needs a real majority
@@ -772,6 +805,34 @@ if _sv.exists() and (_vv / "HS119_votes.csv").exists():
                              "chamber": ch, "votes": mv})
         if rows:
             d["matrix"] = rows
+    # Chamber-wide view for the influence page: members grouped by how much of the group's money they
+    # took, and how often each group voted the group's way. Shown as a pattern, not as proof of motive.
+    influence = []
+    name_by = {p["id"]: p["name"] for p in politicians}
+    party_by = {p["id"]: p["party"] for p in politicians}
+    for g in groups:
+        for ch in ("house", "senate"):
+            rowsg = [(pid_, r) for pid_, d in fin_by.items() for r in d.get("matrix", []) if r["sector"] == g and r["chamber"] == ch and r["cast"] >= 2]
+            if not rowsg:
+                continue
+            nvotes = sum(1 for v in sector_votes if v["sector"] == g and v["chamber"] == ch)
+            if not nvotes:
+                continue
+            paid = sorted([r["money"] for _, r in rowsg if r["money"] > 0])
+            cuts = [paid[int(len(paid) * q)] for q in (0.5, 0.9)] if paid else [0, 0]
+            def tier(m):
+                return "none" if m <= 0 else "top10" if m >= cuts[1] else "upper" if m >= cuts[0] else "lower"
+            buckets = collections.defaultdict(lambda: [0, 0, 0])  # members, with, cast
+            for _, r in rowsg:
+                b = buckets[tier(r["money"])]
+                b[0] += 1; b[1] += r["with"]; b[2] += r["cast"]
+            top = sorted(rowsg, key=lambda x: -x[1]["money"])[:12]
+            influence.append({"sector": g, "chamber": ch, "votes": nvotes,
+                              "tiers": {t: {"members": b[0], "pct_with": round(100 * b[1] / b[2]) if b[2] else None} for t, b in buckets.items()},
+                              "cuts": [round(c) for c in cuts],
+                              "top": [{"id": pid_, "name": name_by.get(pid_, pid_), "party": party_by.get(pid_, ""), "money": r["money"],
+                                       "with": r["with"], "cast": r["cast"]} for pid_, r in top if r["money"] > 0]})
+    print("influence rows", len(influence))
     print("matrix levels", {g: collections.Counter(r["level"] for d in fin_by.values() for r in d.get("matrix", []) if r["sector"] == g) for g in groups})
 
 # ---------------------------------------------------------------- caucuses
@@ -895,11 +956,26 @@ outlets = [{"name": n, "kind": k, "website": w, "logo_url": "", "contact_url": "
     ("Floor speech", "Congress", "https://www.congress.gov"),
     ("X / Twitter post", "Social media", "https://x.com"), ("Press release", "Statement", "")]]
 
+_chamber = {p["id"]: p["chamber"] for p in politicians if p.get("chamber") in ("house", "senate") and p.get("status") != "former"}
+industry_totals = collections.defaultdict(lambda: {"house": 0.0, "senate": 0.0, "members": 0})
+for f_ in finance:
+    ch_ = _chamber.get(f_["politician_id"])
+    if not ch_:
+        continue
+    for k_, v_ in f_["data"].get("industries", {}).items():
+        amt_ = v_.get("pacs", 0) + v_.get("outside_for", 0)
+        if amt_ > 0:
+            industry_totals[k_][ch_] += amt_
+            industry_totals[k_]["members"] += 1
+industry_totals = {k: {**v, "house": round(v["house"]), "senate": round(v["senate"])} for k, v in industry_totals.items()}
 meta = {"congresses": [{"id": 120, "label": "120th Congress (from Jan 3, 2027)"},
                        {"id": 119, "label": "119th Congress (until Jan 3, 2027)"}], "default_congress": 120,
         "exit_national": exit_polls["national"],
         "results_source": "https://en.wikipedia.org/wiki/2026_United_States_House_of_Representatives_elections",
         "congress": "120th", "sworn_in": "2027-01-03", "state_money": meta_state_money, "undecided": undecided,
+        "influence": influence if sector_votes else [],
+        "industry_totals": industry_totals,
+        "industry_labels": INDUSTRY_LABEL,
         "sector_votes": {v["id"]: {k: v.get(k) for k in ("chamber", "date", "title", "industry_side", "industry_position", "industry_source_url", "source_url", "sector")}
                          for v in sector_votes},
         "roster_source": f"https://en.wikipedia.org/w/index.php?title=120th_United_States_Congress&oldid={ROSTER_REV}"}

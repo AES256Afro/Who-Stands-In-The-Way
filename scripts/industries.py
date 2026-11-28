@@ -1,0 +1,55 @@
+"""Industry tags for PACs and super PACs, from the committee's name and its connected organization (FEC
+committee master). Health committees keep their own split (pharma, insurance, hospitals...) in build_seed;
+pro-Israel committees use Track AIPAC's list. Order matters: the first match wins, so narrow patterns
+(crypto, defense) come before broad ones (finance); unions come before oil and coal so the mine
+workers' union counts as labor.
+"""
+import re
+
+INDUSTRY_LABEL = {
+    "health": "Health industry", "pro_israel": "AIPAC and pro-Israel groups", "defense": "Defense contractors",
+    "fossil_fuels": "Oil, gas and coal", "wall_street": "Wall Street and banks", "crypto": "Crypto",
+    "tech": "Big Tech", "guns": "Gun lobby", "real_estate": "Real estate", "labor": "Labor unions",
+}
+
+PATTERNS = [
+    ("crypto", r"CRYPTO|BLOCKCHAIN|BITCOIN|COINBASE|RIPPLE LABS|FAIRSHAKE|PROTECT PROGRESS|DEFEND AMERICAN JOBS|DIGITAL CHAMBER|"
+               r"STAND WITH CRYPTO|KRAKEN|GEMINI TRUST|ANDREESSEN|\bA16Z\b"),
+    ("defense", r"LOCKHEED|RAYTHEON|\bRTX\b|NORTHROP|GENERAL DYNAMICS|L3HARRIS|L-3 |HUNTINGTON INGALLS|BAE SYSTEMS|GENERAL ATOMICS|"
+                r"LEIDOS|SCIENCE APPLICATIONS|\bSAIC\b|BOOZ ALLEN|TEXTRON|BOEING|ANDURIL|PALANTIR|AEROJET|OSHKOSH|ELBIT|\bCACI\b|"
+                r"AEROSPACE INDUSTRIES|NATIONAL DEFENSE INDUSTRIAL|SIERRA NEVADA CORP|\bKBR\b|BWX TECHNOLOGIES|\bV2X\b|AM GENERAL|"
+                r"MERCURY SYSTEMS|KRATOS|HII\b|SHIPBUILD"),
+    ("labor", r"(?<!CREDIT )\bUNION\b|AFL-CIO|\bSEIU\b|TEAMSTERS|BROTHERHOOD|LABORERS|WORKERS|\bIBEW\b|AFSCME|NATIONAL EDUCATION ASSOCIATION|"
+              r"FEDERATION OF TEACHERS|MACHINISTS|STEELWORKERS|CARPENTERS|OPERATING ENGINEERS|PLUMBERS|PIPEFITTERS|FIREFIGHTERS|"
+              r"SHEET METAL|IRONWORKERS|\bUAW\b|UNITED AUTO|BOILERMAKERS|BRICKLAYERS|PAINTERS|LETTER CARRIERS|POSTAL|"
+              r"TRANSPORT WORKERS|\bCWA\b|COMMUNICATIONS WORKERS|UNITE HERE|NURSES"),
+    ("fossil_fuels", r"PETROLEUM|EXXON|CHEVRON|CONOCO|VALERO|PHILLIPS 66|OCCIDENTAL|DEVON ENERGY|PIONEER NATURAL|HESS CORP|"
+                     r"SHELL OIL|\bBP (AMERICA|CORP|NORTH)|KOCH (INDUSTRIES|INC)|ENERGY TRANSFER|KINDER MORGAN|WILLIAMS COMPANIES|"
+                     r"ENBRIDGE|TC ENERGY|ONEOK|CHENIERE|PIPELINE|\bOIL\b|NATURAL GAS|\bCOAL\b|NATIONAL MINING|PEABODY|CONSOL ENERGY|"
+                     r"DIAMONDBACK|\bEOG\b|CONTINENTAL RESOURCES|HALLIBURTON|BAKER HUGHES|SCHLUMBERGER|PROPANE|REFIN|EXPLORATION & PRODUCTION|"
+                     r"MARATHON PETROLEUM|MARATHON OIL|COTERRA|ANTERO|EQT CORP|CHESAPEAKE ENERGY|PLAINS ALL AMERICAN|TARGA"),
+    ("tech", r"GOOGLE|ALPHABET|META PLATFORMS|FACEBOOK|MICROSOFT|AMAZON|APPLE INC|ORACLE|\bINTEL CORP|NVIDIA|QUALCOMM|CISCO|"
+             r"\bIBM\b|INTERNATIONAL BUSINESS MACHINES|SALESFORCE|\bUBER\b|LYFT|AIRBNB|NETCHOICE|OPENAI|LEADING THE FUTURE|"
+             r"COMPUTER & COMMUNICATIONS|TECHNET|INFORMATION TECHNOLOGY INDUSTRY|SOFTWARE|SEMICONDUCTOR"),
+    ("guns", r"NATIONAL RIFLE|\bNRA\b|GUN OWNERS|SHOOTING SPORTS|SAFARI CLUB|FIREARM|SECOND AMENDMENT"),
+    ("wall_street", r"\bBANK|BANCORP|BANCSHARES|GOLDMAN SACHS|JPMORGAN|J\.P\. MORGAN|CITIGROUP|WELLS FARGO|MORGAN STANLEY|BLACKROCK|"
+                    r"BLACKSTONE|\bKKR\b|CARLYLE|APOLLO (GLOBAL|MANAGEMENT)|PRIVATE EQUITY|AMERICAN INVESTMENT COUNCIL|SECURITIES|"
+                    r"INVESTMENT|CAPITAL ONE|AMERICAN EXPRESS|\bVISA\b|MASTERCARD|SCHWAB|FIDELITY|VANGUARD|STATE STREET|CREDIT UNION|"
+                    r"MORTGAGE BANKERS|FINANCIAL SERVICES|HEDGE FUND|CITADEL|PAYDAY|COMMUNITY FINANCIAL|ASSET MANAGEMENT|"
+                    r"\bNASDAQ\b|STOCK EXCHANGE|INTERCONTINENTAL EXCHANGE|\bCME GROUP|INSURANCE BROKERS|FINANCIAL GROUP"),
+    ("real_estate", r"REALTORS|HOME BUILDERS|REAL ESTATE|APARTMENT|PROPERTY OWNERS|BUILDING OWNERS|SHOPPING CENTERS"),
+]
+PATTERNS = [(k, re.compile(p)) for k, p in PATTERNS]
+
+
+def industry_of(name, org="", health_sector=None, pro_israel=False):
+    """Industry key for a committee, or None. health_sector: build_seed's health tag for it, if any."""
+    if pro_israel:
+        return "pro_israel"
+    text = f"{name} {org}".upper()
+    if health_sector and "UNION" not in text:
+        return "health"
+    for key, rx in PATTERNS:
+        if rx.search(text):
+            return key
+    return None

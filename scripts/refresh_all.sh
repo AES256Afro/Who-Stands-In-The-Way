@@ -31,6 +31,8 @@ python3 scripts/trackaipac.py
 python3 scripts/israel_career.py
 # Current X profile pictures (slow: Internet Archive lookups; only new handles are looked up).
 python3 scripts/x_avatars.py
+# Industry votes researched into data/raw/research/industry_votes/ (checked against Voteview) -> scripts/sector_votes.json.
+python3 scripts/merge_industry_votes.py
 python3 scripts/build_seed.py
 python3 scripts/money_network.py
 python3 scripts/vote_records.py

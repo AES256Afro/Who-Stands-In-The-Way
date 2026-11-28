@@ -134,15 +134,16 @@ export function israelSection(f) {
 		${rows.length ? `<table class="t"><tr><th>Committee</th><th class="n">For them</th><th class="n">Against</th></tr>${rows.map((r) => `<tr><td><a href="${FEC_CMTE(h(r[3]))}" target="_blank" rel="noopener">${h(r[0])}</a></td><td class="n">${r[1] ? money(r[1]) : "—"}</td><td class="n">${r[2] ? money(r[2]) : "—"}</td></tr>`).join("")}</table>` : ""}` + note;
 }
 
-const GROUP = { pharma: "Drugmakers", insurers: "Insurers and PBMs", hospitals: "Hospitals", pro_israel: "AIPAC and pro-Israel groups" };
+const GROUP = new Proxy({ pharma: "Drugmakers", insurers: "Insurers and PBMs", hospitals: "Hospitals", pro_israel: "AIPAC and pro-Israel groups" },
+	{ get: (t, k) => t[k] || S.data?.meta?.industry_labels?.[k] || k });
 const LVL = { low: ["Low", "var(--s-supports)"], moderate: ["Moderate", "var(--s-public_option)"], high: ["High", "var(--s-opposes)"], very_high: ["Very high", "var(--s-opposes)"], none: ["—", "var(--s-unknown)"] };
 
 export function matrixBox(f) {
 	const m = f?.matrix;
 	if (!m || !m.length) return "";
 	const ch = m[0].chamber === "senate" ? "senators" : "House members";
-	return `<h3>Money vs. votes <small>by donor group</small></h3>
-		<table class="t matrix"><tr><th>Donor group</th><th class="n">Money</th><th class="n">vs. ${h(ch)}</th><th class="n">Voted their way</th><th>Alignment</th></tr>
+	return `<h3>Money vs. votes <small>by industry</small></h3>
+		<table class="t matrix"><tr><th>Industry</th><th class="n">Money</th><th class="n">vs. ${h(ch)}</th><th class="n">Voted their way</th><th>Alignment</th></tr>
 		${m.map((r) => {
 			const [lbl, color] = LVL[r.level] || LVL.none;
 			const SV = S.data.meta?.sector_votes || {};
@@ -152,5 +153,5 @@ export function matrixBox(f) {
 				<td class="n">${r.cast ? `${r.with} of ${r.cast}` : "no votes"}</td>
 				<td>${r.level === "none" ? `<span class="note">${r.cast ? "Too few votes to rate" : "—"}</span>` : `<span class="lvl" style="--lvl:${color}">${h(lbl)}</span>`}</td></tr>`;
 		}).join("")}</table>
-		<p class="note">Each row puts a donor group's money next to how this member voted on bills that group publicly lobbied on (each vote links to where the group stated its side). Alignment is high only when the member took more of that group's money than most of their chamber <i>and</i> voted the group's way on most of its votes. This is a correlation, not proof of motive: members can vote the way donors want for their own reasons, and donors often give to people who already agree with them.</p>`;
+		<p class="note">Each row puts an industry's money next to how this member voted on the bills that industry lobbied on (each vote links to where the industry stated its side). Alignment is high when the member took more of that industry's money than most of their chamber <i>and</i> voted its way on most of its votes. Industries are tagged from each PAC's name and sponsor in FEC filings; see <a href="#/influence">Money and votes</a> for every industry across Congress.</p>`;
 }

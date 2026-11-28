@@ -6,6 +6,7 @@ import { caucusBadges, aipacBadge, aipacLine, hoverCard, israelSection, matrixBo
 import { renderChanges, profileHistory, recentStrip, bindChanges } from "./changes.js";
 import { renderStates, renderState, bindStates, stateName } from "./states.js";
 import { agendaHtml, bindAgenda, renderFocus, bindFocus } from "./focus.js";
+import { renderInfluence, bindInfluence } from "./influence.js";
 import { mapHtml, stateHtml, renderIssues, renderElections, issueMatrix, leanBox, LEAN, bindViews, zipBox, renderZip, bindZip, votesBox, renderVotes, voteScore, drawDistricts } from "./views.js";
 
 export const STANCE = {
@@ -301,7 +302,7 @@ export const chrome = () => `${S.admin ? `<div class="adminbar"><div class="wrap
 	<div class="wrap"><header class="top"><a class="brand" href="#/"><img class="brand-mark" src="/favicon.svg?v=${h(S.data?.logo || "A")}" width="28" height="28" alt=""><span class="brand-text">Who Stands <span>In The Way</span></span></a>
 	<div class="gsearch"><input type="search" id="gsq" placeholder="Search a politician" autocomplete="off" aria-label="Search politicians" aria-controls="gsr" aria-expanded="false">
 		<div id="gsr" class="gsr" role="listbox" hidden></div></div>
-	<nav><a class="btn ghost" href="#/">Dashboard</a><a class="btn ghost" href="#/zip">Find your rep</a><a class="btn ghost" href="#/votes">Key votes</a><a class="btn ghost" href="#/money">Money</a><a class="btn ghost" href="#/states">States</a><a class="btn ghost" href="#/focus/TX">Texas</a><a class="btn ghost" href="#/issues">Issues</a><a class="btn ghost" href="#/changes">Changes</a><a class="btn ghost" href="#/elections">2026 results</a><a class="btn" href="#/admin">${S.admin ? "Admin panel" : "Admin"}</a></nav></header></div>`;
+	<nav><a class="btn ghost" href="#/">Dashboard</a><a class="btn ghost" href="#/zip">Find your rep</a><a class="btn ghost" href="#/votes">Key votes</a><a class="btn ghost" href="#/money">Money</a><a class="btn ghost" href="#/influence">Money &amp; votes</a><a class="btn ghost" href="#/states">States</a><a class="btn ghost" href="#/focus/TX">Texas</a><a class="btn ghost" href="#/issues">Issues</a><a class="btn ghost" href="#/changes">Changes</a><a class="btn ghost" href="#/elections">2026 results</a><a class="btn" href="#/admin">${S.admin ? "Admin panel" : "Admin"}</a></nav></header></div>`;
 export const footer = () => `<footer><div class="wrap">Baseline: the Congress sworn in January 3, 2027, from <a href="${url(S.data.meta?.roster_source || "https://en.wikipedia.org/wiki/120th_United_States_Congress")}" target="_blank" rel="noopener">Wikipedia's 120th Congress roster</a> (checked against Wikidata); returning members' accounts from the <a href="https://github.com/unitedstates/congress-legislators" target="_blank" rel="noopener">congress-legislators</a> project; returning members' support = sponsors and cosponsors of the 119th Congress bill on <a href="https://www.congress.gov/bill/119th-congress/house-bill/3069" target="_blank" rel="noopener">congress.gov</a>; money from <a href="https://www.fec.gov/data/browse-data/?tab=bulk-data" target="_blank" rel="noopener">FEC bulk filings</a> (2025–26 cycle); lean starts from each member's voting record (<a href="https://voteview.com" target="_blank" rel="noopener">Voteview</a> DW-NOMINATE, 119th Congress) and can be overridden by hand; newcomers' stances researched from campaign statements in November 2026 and linked to their source. "Not on record" means not a cosponsor and nothing documented yet. Everything after the baseline is maintained by hand.</div></footer>`;
 
 // ------------------------------------------------------------------ state campaign money (state agencies' open data)
@@ -541,6 +542,7 @@ function route() {
 		else if (page.startsWith("#/states")) renderStates();
 		else if (page.startsWith("#/focus")) renderFocus(page.split("/")[2] || "TX");
 		else if (page.startsWith("#/state/")) renderState(page.split("/")[2] || "");
+		else if (page.startsWith("#/influence")) renderInfluence();
 		else if (page.startsWith("#/money")) renderMoney(page.split("/").slice(2));
 		else if (page.startsWith("#/zip")) renderZip(decodeURIComponent(page.split("/")[2] || ""));
 		else renderMain();
@@ -617,6 +619,7 @@ function bind() {
 	// Going back to a /p/<id> entry may fire popstate, hashchange or both; route once per address.
 	const nav = () => { if (location.href !== route.url) route(); };
 	bindSearch();
+	bindInfluence();
 	window.addEventListener("hashchange", nav);
 	window.addEventListener("popstate", nav);
 	bindAdmin();
