@@ -102,7 +102,7 @@ async function draw(d, square) {
 	let y = py + nsize;
 	for (const line of wrap(ctx, p.name, tw)) { ctx.fillText(line, tx, y); y += nsize * 1.08; }
 	ctx.font = `600 26px ${SANS}`; ctx.fillStyle = COLORS[p.party] || COLORS.ink2;
-	const role = p.chamber === "executive" ? p.role : `${p.role} · ${seat(p)}`;
+	const role = p.chamber === "executive" ? p.role : p.chamber === "governor" ? seat(p) : `${p.role} · ${seat(p)}`;
 	ctx.fillText(`${PARTY[p.party] || p.party} · ${role}`, tx, y + 8);
 	y += 52;
 

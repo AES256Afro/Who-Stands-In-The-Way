@@ -17,5 +17,9 @@
 	},
 	"overrides": {
 		"vite": "npm:@voidzero-dev/vite-plus-core@1.4.0"
+	},
+	"dependencies": {
+		"@resvg/resvg-wasm": "^2.6.2",
+		"satori": "^0.18.4"
 	}
 }

@@ -481,14 +481,38 @@ const STANCE_LINE = {
 	unclear: "is wishy-washy on Medicare for All", opposes: "opposes Medicare for All",
 	unknown: "has no public position on Medicare for All yet",
 };
-async function sharePage(req, env, id) {
-	const origin = new URL(req.url).origin;
-	const p = await env.DB.prepare(`SELECT p.id, p.name, p.role, p.state, p.district, p.chamber, p.party, p.phone,
+async function cardData(env, id) {
+	return env.DB.prepare(`SELECT p.id, p.name, p.first, p.last, p.role, p.state, p.district, p.sdistrict, p.chamber, p.party, p.phone, p.photo_url,
 		(SELECT stance FROM positions WHERE politician_id = p.id AND policy_id = 'm4a') AS stance,
 		COALESCE(json_extract(f.data,'$.health_total'),0) + COALESCE((SELECT SUM(json_extract(value,'$.health_total'))
 			FROM json_each(json_extract(f.data,'$.leadership'))),0) AS health, json_extract(f.data,'$.employees.total') AS emp,
+		COALESCE(json_extract(f.data,'$.totals.receipts'), json_extract(f.data,'$.total')) AS raised,
 		json_extract(f.data,'$.state') AS state_money
 		FROM politicians p LEFT JOIN finance f ON f.politician_id = p.id WHERE p.id = ?`).bind(id).first();
+}
+// Changes whenever anything drawn on the card changes, so previews refetch instead of showing a stale card.
+const cardVersion = async (p) => {
+	const key = [p.name, p.role, p.party, p.stance, p.health, p.emp, p.raised, p.phone, p.photo_url, p.chamber, p.district, p.sdistrict].join("|");
+	const d = new Uint8Array(await crypto.subtle.digest("SHA-1", new TextEncoder().encode(key)));
+	return [...d.slice(0, 5)].map((b) => b.toString(16).padStart(2, "0")).join("");
+};
+async function cardImage(req, env, ctx, id) {
+	const p = await cardData(env, id);
+	if (!p) return new Response("Not found", { status: 404 });
+	const v = await cardVersion(p);
+	const key = new Request(`${new URL(req.url).origin}/m/${encodeURIComponent(id)}.png?v=${v}`);
+	const cache = caches.default;
+	const hit = await cache.match(key);
+	if (hit) return hit;
+	const { renderCard } = await import("./og/card.js");
+	const png = await renderCard(p, new URL(req.url).host);
+	const res = new Response(png, { headers: { "content-type": "image/png", "cache-control": "public, max-age=86400" } });
+	ctx.waitUntil(cache.put(key, res.clone()));
+	return res;
+}
+async function sharePage(req, env, id) {
+	const origin = new URL(req.url).origin;
+	const p = await cardData(env, id);
 	const target = p ? `${origin}/#/p/${encodeURIComponent(p.id)}` : `${origin}/`;
 	const where = p ? (p.chamber === "senate" ? `Senator, ${p.state}` : p.chamber === "house" ? `${p.state}-${p.district || "AL"}` : p.role) : "";
 	const title = p ? `${p.name} ${STANCE_LINE[p.stance || "unknown"]}` : "Who Stands In The Way";
@@ -498,15 +522,17 @@ async function sharePage(req, env, id) {
 	if (p && (p.emp || 0) > 0) bits.push(`${money(p.emp)} from health-industry employees`);
 	const desc = p ? `${p.party}-${where}. ${bits.join(" · ")}${bits.length ? ". " : ""}${p.phone ? `Call ${p.phone}. ` : ""}See the record and who funds them.`
 		: "Where every member of Congress stands on Medicare for All.";
+	const image = p ? `${origin}/m/${encodeURIComponent(p.id)}.png?v=${await cardVersion(p)}` : `${origin}/og.png`;
 	const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>${esc(title)}</title>
 <meta name="description" content="${esc(desc)}">
 <meta property="og:type" content="profile"><meta property="og:site_name" content="Who Stands In The Way">
 <meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(desc)}">
 <meta property="og:url" content="${esc(origin + "/m/" + encodeURIComponent(id))}">
-<meta property="og:image" content="${esc(origin)}/og.png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
+<meta property="og:image" content="${esc(image)}"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="${esc(title)}">
 <meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="${esc(title)}">
-<meta name="twitter:description" content="${esc(desc)}"><meta name="twitter:image" content="${esc(origin)}/og.png">
+<meta name="twitter:description" content="${esc(desc)}"><meta name="twitter:image" content="${esc(image)}">
 <meta http-equiv="refresh" content="0;url=${esc(target)}"><link rel="canonical" href="${esc(target)}">
 </head><body style="font-family:system-ui;background:#111214;color:#f1f0ec;padding:40px">
 <p>${esc(title)}. <a style="color:#7fd3c4" href="${esc(target)}">Open the profile</a>.</p>
@@ -550,7 +576,7 @@ async function changesFeed(req, env) {
 }
 
 export default {
-	async fetch(req, env) {
+	async fetch(req, env, ctx) {
 		const url = new URL(req.url);
 		if (url.pathname === "/changes.xml") {
 			ready ??= init(env.DB).catch((e) => { ready = null; throw e; });
@@ -560,7 +586,12 @@ export default {
 		if (url.pathname.startsWith("/m/")) {
 			ready ??= init(env.DB).catch((e) => { ready = null; throw e; });
 			await ready;
-			return sharePage(req, env, decodeURIComponent(url.pathname.slice(3)).split("/")[0]);
+			const id = decodeURIComponent(url.pathname.slice(3)).split("/")[0];
+			if (id.endsWith(".png")) {
+				try { return await cardImage(req, env, ctx, id.slice(0, -4)); }
+				catch (e) { console.error("card", id, String(e?.stack || e)); return Response.redirect(`${url.origin}/og.png`, 302); }
+			}
+			return sharePage(req, env, id);
 		}
 		if (!url.pathname.startsWith("/api/")) return new Response("Not found", { status: 404 });
 		try {
