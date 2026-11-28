@@ -2,7 +2,7 @@
 // current stance and figures. Landscape (1200x630) for X/Facebook/link previews, square (1080x1080) for
 // Instagram. On phones the system share sheet is used when it can take files; otherwise it downloads.
 import { S, api, toast, h, STANCE, PARTY, seat } from "./main.js";
-import { aipacLine } from "./badges.js";
+import { aipacLine, highlightsOf } from "./badges.js";
 
 const COLORS = {
 	bg: "#111214", panel: "#1a1b1e", ink: "#f1f0ec", ink2: "#b9bbc1", ink3: "#8a8d95", line: "#2f3136",
@@ -126,7 +126,11 @@ async function draw(d, square) {
 	if (pacs > 0) facts.push(`${money(pacs)} from health-industry PACs`);
 	if (emp > 0) facts.push(`${money(emp)} from health-industry employees`);
 	if (!facts.length && f.totals) facts.push(`${money(f.totals.receipts)} raised in 2025–26`);
-	const aipac = aipacLine({ ...p, israel_career: f.israel?.career || null, trackaipac: f.israel?.trackaipac || null }, money, { compact: true });
+	const row = { ...(S.byId?.get(p.id) || {}), ...p, israel_career: f.israel?.career || null, trackaipac: f.israel?.trackaipac || null,
+		ai_money: (f.industries?.ai?.pacs || 0) + (f.industries?.ai?.outside_for || 0) };
+	const hlist = highlightsOf(row, money);
+	for (const x of hlist) facts.push(`${x.label}: ${x.value}`);
+	const aipac = hlist.some((x) => x.key === "pro_israel") ? "" : aipacLine(row, money, { compact: true });
 	if (aipac) facts.push(aipac);
 	let fy = by + bh + (square ? 84 : 46);
 	const tight = !square && (facts.length > 2 || facts.join("").length > 110);

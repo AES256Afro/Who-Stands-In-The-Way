@@ -267,8 +267,13 @@ const MONEY_FIELDS = ["totals.receipts", "totals.pacs", "health_total", "employe
 	"israel.aipac.direct", "israel.aipac.earmarked", "israel.aipac.udp_support", "israel.aipac.udp_oppose", "israel.for", "israel.against",
 	"israel.career.for", "israel.career.vs_opponents", "israel.career.against", "israel.trackaipac.total"];
 
+// Site look set in admin (meta 'look'). Highlights are what profiles, hover cards and share cards call out
+// besides Medicare for All: policies (by id, shown as stance banners) and money flags.
+const HIGHLIGHT_MONEY = ["pro_israel", "ai"];
+const LOOK_DEFAULT = { drawer_w: 640, hover_w: 420, profile_text: 1, highlights: { policies: [], money: ["pro_israel", "ai"] } };
+
 async function bootstrap(db) {
-	const [pols, policies, positions, outlets, apps, meta, logo, hover, textScale, terms, issues, polls, kv, mv] = await db.batch([
+	const [pols, policies, positions, outlets, apps, meta, logo, hover, textScale, look, terms, issues, polls, kv, mv] = await db.batch([
 		db.prepare(`SELECT p.id, p.name, p.last, p.chamber, p.role, p.state, p.district, p.party, p.voting, p.status,
 			p.term_end, p.next_election, p.photo_url, p.twitter, p.lean, p.ideology, p.phone, p.phone_label, p.caucuses,
 			EXISTS (SELECT 1 FROM json_each(COALESCE(p.committees,'[]')) WHERE json_extract(value,'$.health') = 1) AS health_cmte,
@@ -282,6 +287,7 @@ async function bootstrap(db) {
 			json_extract(f.data,'$.israel.for') AS israel_for,
 			json_extract(f.data,'$.israel.against') AS israel_against,
 			json_extract(f.data,'$.israel.trackaipac') AS trackaipac,
+			json_extract(f.data,'$.industries.ai.pacs') + COALESCE(json_extract(f.data,'$.industries.ai.outside_for'), 0) AS ai_money,
 			CASE WHEN json_extract(f.data,'$.israel.career') IS NOT NULL THEN json_object('for', json_extract(f.data,'$.israel.career.for'), 'vs_opponents', json_extract(f.data,'$.israel.career.vs_opponents'),
 				'against', json_extract(f.data,'$.israel.career.against'), 'first_cycle', json_extract(f.data,'$.israel.career.first_cycle'),
 				'aipac', json_extract(f.data,'$.israel.career.aipac')) END AS israel_career,
@@ -297,13 +303,14 @@ async function bootstrap(db) {
 		db.prepare("SELECT value FROM meta WHERE key = 'logo'"),
 		db.prepare("SELECT value FROM meta WHERE key = 'hover'"),
 		db.prepare("SELECT value FROM meta WHERE key = 'text_scale'"),
+		db.prepare("SELECT value FROM meta WHERE key = 'look'"),
 		db.prepare("SELECT * FROM terms"),
 		db.prepare("SELECT * FROM issues ORDER BY rank, name"),
 		db.prepare("SELECT * FROM issue_polls ORDER BY date DESC"),
 		db.prepare("SELECT * FROM key_votes ORDER BY date, sort"),
 		db.prepare("SELECT vote_id, politician_id, vote FROM member_votes"),
 	]);
-	return { meta: JSON.parse(meta.results[0]?.value || "{}"), logo: logo.results[0]?.value || "A", hover: hover.results[0]?.value || "card", text_scale: JSON.parse(textScale.results[0]?.value || "{}"), terms: terms.results, issues: issues.results,
+	return { meta: JSON.parse(meta.results[0]?.value || "{}"), logo: logo.results[0]?.value || "A", hover: hover.results[0]?.value || "card", text_scale: JSON.parse(textScale.results[0]?.value || "{}"), look: { ...LOOK_DEFAULT, ...JSON.parse(look.results[0]?.value || "{}") }, terms: terms.results, issues: issues.results,
 		issue_polls: polls.results, scale: SCALE,
 		key_votes: kv.results.map((v) => ({ ...v, tally: JSON.parse(v.tally || "{}") })),
 		member_votes: mv.results.map((m) => [m.vote_id, m.politician_id, m.vote]), politicians: pols.results, policies: policies.results, positions: positions.results,
@@ -376,6 +383,19 @@ async function admin(req, env, parts) {
 			ON CONFLICT (politician_id) DO UPDATE SET data = excluded.data, source = 'admin', updated_at = excluded.updated_at`).bind(id, JSON.stringify(data), new Date().toISOString().slice(0, 10)),
 			change(db, { politician_id: id, kind: "evidence", field: "agenda", note: "Agenda edited" })]);
 		return json({ ok: true });
+	}
+	if (table === "look" && method === "PUT") {
+		// Partial update of the site look: sizes and highlights. Each key is checked; unknown keys are dropped.
+		const cur = { ...LOOK_DEFAULT, ...JSON.parse((await db.prepare("SELECT value FROM meta WHERE key = 'look'").first())?.value || "{}") };
+		const num = (k, lo, hi) => { if (body[k] === undefined) return; const n = Number(body[k]); if (!(n >= lo && n <= hi)) throw new Error(k); cur[k] = Math.round(n * 100) / 100; };
+		try { num("drawer_w", 480, 1000); num("hover_w", 300, 700); num("profile_text", 0.9, 1.5); } catch (e) { return fail(400, `${e.message} out of range`); }
+		if (body.highlights !== undefined) {
+			const hl = body.highlights || {};
+			const pol = new Set((await db.prepare("SELECT id FROM policies").all()).results.map((r) => r.id));
+			cur.highlights = { policies: (hl.policies || []).filter((x) => pol.has(x)).slice(0, 4), money: (hl.money || []).filter((x) => HIGHLIGHT_MONEY.includes(x)) };
+		}
+		await db.prepare("INSERT INTO meta (key, value) VALUES ('look', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").bind(JSON.stringify(cur)).run();
+		return json({ ok: true, look: cur });
 	}
 	if (table === "text_scale" && method === "PUT") {
 		const all = Number(body.all), small = Number(body.small);
@@ -596,20 +616,55 @@ const STANCE_LINE = {
 	unknown: "has no public position on Medicare for All yet",
 };
 async function cardData(env, id) {
-	return env.DB.prepare(`SELECT p.id, p.name, p.first, p.last, p.role, p.state, p.district, p.sdistrict, p.chamber, p.party, p.phone, p.photo_url,
+	const p = await env.DB.prepare(`SELECT p.id, p.name, p.first, p.last, p.role, p.state, p.district, p.sdistrict, p.chamber, p.party, p.phone, p.photo_url,
 		(SELECT stance FROM positions WHERE politician_id = p.id AND policy_id = 'm4a') AS stance,
 		COALESCE(json_extract(f.data,'$.health_total'),0) + COALESCE((SELECT SUM(json_extract(value,'$.health_total'))
 			FROM json_each(json_extract(f.data,'$.leadership'))),0) AS health, json_extract(f.data,'$.employees.total') AS emp,
 		COALESCE(json_extract(f.data,'$.totals.receipts'), json_extract(f.data,'$.total')) AS raised,
 		json_extract(f.data,'$.state') AS state_money, json_extract(f.data,'$.israel.aipac') AS aipac, json_extract(f.data,'$.israel.trackaipac') AS trackaipac,
+		json_extract(f.data,'$.industries.ai') AS ai_money,
 		CASE WHEN json_extract(f.data,'$.israel.career') IS NOT NULL THEN json_object('for', json_extract(f.data,'$.israel.career.for'), 'vs_opponents', json_extract(f.data,'$.israel.career.vs_opponents'),
 				'against', json_extract(f.data,'$.israel.career.against'), 'first_cycle', json_extract(f.data,'$.israel.career.first_cycle'),
 				'aipac', json_extract(f.data,'$.israel.career.aipac')) END AS israel_career
 		FROM politicians p LEFT JOIN finance f ON f.politician_id = p.id WHERE p.id = ?`).bind(id).first();
+	if (p) p.highlights = await highlightList(env, p);
+	return p;
+}
+
+// What a card calls out besides Medicare for All (admin: Site look → Highlights). Same rules as highlightsOf()
+// in src/client/badges.js. tone picks the color: a stance, or "paid" / "clean" for money.
+async function highlightList(env, p) {
+	const look = { ...LOOK_DEFAULT, ...JSON.parse((await env.DB.prepare("SELECT value FROM meta WHERE key = 'look'").first())?.value || "{}") };
+	const hl = look.highlights || LOOK_DEFAULT.highlights, out = [];
+	const pols = (hl.policies || []).filter((x) => x !== "m4a");
+	if (pols.length) {
+		const rows = (await env.DB.prepare(`SELECT pl.id, pl.name, s.stance FROM policies pl LEFT JOIN positions s ON s.policy_id = pl.id AND s.politician_id = ?
+			WHERE pl.id IN (SELECT value FROM json_each(?))`).bind(p.id, JSON.stringify(pols)).all()).results;
+		for (const id of pols) {
+			const r = rows.find((x) => x.id === id);
+			if (r) out.push({ label: r.name, value: STANCE_WORD[r.stance || "unknown"], tone: r.stance || "unknown" });
+		}
+	}
+	const federal = p.chamber === "house" || p.chamber === "senate";
+	const money = (n) => "$" + Math.round(n || 0).toLocaleString("en-US");
+	if (federal && hl.money?.includes("pro_israel")) {
+		const t = (() => { try { return JSON.parse(p.trackaipac || "null"); } catch { return null; } })();
+		const c = (() => { try { return JSON.parse(p.israel_career || "null"); } catch { return null; } })();
+		if (t?.status === "funded" && t.total > 0) out.push({ label: "Israel lobby money", value: money(t.total), tone: "paid" });
+		else if (t?.status === "rejects") out.push({ label: "Israel lobby money", value: "Rejects AIPAC", tone: "clean" });
+		else if (!t && c?.for > 0) out.push({ label: "Israel lobby money", value: money(c.for), tone: "paid" });
+		else out.push({ label: "Israel lobby money", value: "None", tone: "clean" });
+	}
+	if (federal && hl.money?.includes("ai")) {
+		const a = (() => { try { return JSON.parse(p.ai_money || "null"); } catch { return null; } })();
+		const amt = a ? (a.pacs || 0) + (a.outside_for || 0) : 0;
+		out.push({ label: "AI and data center money", value: amt > 0 ? money(amt) : "None", tone: amt > 0 ? "paid" : "clean" });
+	}
+	return out;
 }
 // Changes whenever anything drawn on the card changes, so previews refetch instead of showing a stale card.
 const cardVersion = async (p) => {
-	const key = [p.name, p.role, p.party, p.stance, p.health, p.emp, p.raised, p.phone, p.photo_url, p.chamber, p.district, p.sdistrict, p.aipac, p.israel_career, p.trackaipac].join("|");
+	const key = [p.name, p.role, p.party, p.stance, p.health, p.emp, p.raised, p.phone, p.photo_url, p.chamber, p.district, p.sdistrict, p.aipac, p.israel_career, p.trackaipac, JSON.stringify(p.highlights || [])].join("|");
 	const d = new Uint8Array(await crypto.subtle.digest("SHA-1", new TextEncoder().encode(key)));
 	return [...d.slice(0, 5)].map((b) => b.toString(16).padStart(2, "0")).join("");
 };

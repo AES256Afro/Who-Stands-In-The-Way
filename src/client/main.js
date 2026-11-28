@@ -2,7 +2,7 @@ import { renderAdmin, adminProfileTools, bindAdmin } from "./admin.js";
 import { shareButtons, bindShare } from "./share.js";
 import { renderMoney, alignmentBox, moneyWeb, votingRecord, bindMoney } from "./money.js";
 import { xSection, bindX } from "./xposts.js";
-import { caucusBadges, aipacBadge, aipacLine, hoverCard, israelSection, matrixBox } from "./badges.js";
+import { caucusBadges, aipacBadge, aipacLine, hoverCard, israelSection, matrixBox, highlightChips, highlightsOf } from "./badges.js";
 import { renderChanges, profileHistory, recentStrip, bindChanges } from "./changes.js";
 import { renderStates, renderState, bindStates, stateName } from "./states.js";
 import { agendaHtml, bindAgenda, renderFocus, bindFocus } from "./focus.js";
@@ -78,9 +78,16 @@ export function toast(msg, err) {
 // under 14px also by --ts-small.
 export function applyTextScale(t) {
 	const root = document.documentElement.style;
-	root.setProperty("--ts-all", String(t?.all || 1));
+	root.setProperty("--ts-site", String(t?.all || 1));
 	root.setProperty("--ts-small", String(t?.small || 1));
 	try { localStorage.setItem("wsitw-ts", JSON.stringify(t || {})); } catch {}
+}
+// Profile panel width, profile and hover text size, hover card width (admin: Site look).
+export function applyLook(l) {
+	const root = document.documentElement.style;
+	root.setProperty("--drawer-w", (l?.drawer_w || 640) + "px");
+	root.setProperty("--hover-w", (l?.hover_w || 420) + "px");
+	root.setProperty("--ts-profile", String(l?.profile_text || 1));
 }
 
 export async function load() {
@@ -89,6 +96,7 @@ export async function load() {
 	S.byId = new Map(data.all.map((p) => [p.id, p]));
 	S.data = data;
 	applyTextScale(data.text_scale);
+	applyLook(data.look);
 	S.congress ??= data.meta?.default_congress || 120;
 	applyCongress();
 	S.admin = me.admin;
@@ -120,6 +128,30 @@ export const stanceOf = (id) => S.pos.get(id)?.stance || "unknown";
 const policy = () => S.data.policies.find((p) => p.id === S.policy) || {};
 
 // ------------------------------------------------------------------ charts
+// A seat chart for any grouping: seats = [{id, color}] in the order they should fill, left to right.
+export function seatChart(seats, rows, label, big, small) {
+	const W = 600, H = 320, cx = W / 2, cy = H - 14, r0 = 96, r1 = 286;
+	const radii = Array.from({ length: rows }, (_, i) => r0 + ((r1 - r0) * i) / (rows - 1));
+	const sum = radii.reduce((a, b) => a + b, 0), n = seats.length;
+	const counts = radii.map((r) => Math.round((n * r) / sum));
+	let diff = n - counts.reduce((a, b) => a + b, 0);
+	for (let i = rows - 1; diff !== 0; i = (i - 1 + rows) % rows) { counts[i] += Math.sign(diff); diff -= Math.sign(diff); }
+	const pts = [];
+	radii.forEach((r, i) => {
+		for (let k = 0; k < counts[i]; k++) {
+			const a = counts[i] === 1 ? Math.PI / 2 : Math.PI - (Math.PI * k) / (counts[i] - 1);
+			pts.push({ a, r, x: cx + r * Math.cos(a), y: cy - r * Math.sin(a) });
+		}
+	});
+	pts.sort((p, q) => q.a - p.a || p.r - q.r);
+	const dot = Math.min((r1 - r0) / (rows - 1), (Math.PI * r0) / Math.max(counts[0] - 1, 1)) * 0.43;
+	return `<svg class="hemi" viewBox="0 0 ${W} ${H}" role="img" aria-label="${h(label)}">
+		${seats.map((m, i) => `<circle cx="${pts[i].x.toFixed(1)}" cy="${pts[i].y.toFixed(1)}" r="${dot.toFixed(1)}" fill="${m.color}" data-id="${h(m.id)}"/>`).join("")}
+		<text class="big" x="${cx}" y="${cy - 26}" text-anchor="middle">${h(big)}</text>
+		<text class="small" x="${cx}" y="${cy - 8}" text-anchor="middle">${h(small)}</text>
+	</svg>`;
+}
+
 function hemicycle(members, rows, label) {
 	const W = 600, H = 320, cx = W / 2, cy = H - 14, r0 = 96, r1 = 286;
 	const radii = Array.from({ length: rows }, (_, i) => r0 + ((r1 - r0) * i) / (rows - 1));
@@ -404,7 +436,8 @@ async function openProfile(id) {
 			<div style="flex:1"><h2>${h(p.name)}</h2><div class="meta"><span class="party ${h(p.party)}">${h(PARTY[p.party] || p.party)}</span> · ${state ? h(seat(p)) : h(p.role) + (p.chamber === "executive" ? "" : " · " + h(seat(p)))}${p.status === "incoming" ? " · new in 2027" : ""}</div>
 				<div class="meta">${p.status === "departing" ? "Leaving Congress January 3, 2027" : `${p.term_end ? `Serving ${p.status === "incoming" || p.chamber === "house" ? "Jan 3, 2027" : "now"} – ${h(fmtDate(p.term_end))}` : ""}${p.next_election ? ` · <b>next election ${h(fmtDate(p.next_election))}</b>` : ""}`}</div>
 				${(() => { const r = S.byId?.get(p.id) || p, b = caucusBadges(r, { links: true }) + aipacBadge(r, { own: !aipacLine(r) }); return b ? `<div class="rtags dtags">${b}</div>` : ""; })()}
-				${(() => { const l = aipacLine(S.byId?.get(p.id) || p); return l ? `<div class="meta aipac-line"><button type="button" class="linkish" data-jump="aipac" title="Jump to the AIPAC breakdown">${h(l)}</button></div>` : ""; })()}</div>
+				${(() => { const r = S.byId?.get(p.id) || p, c = highlightChips(r); return c ? `<div class="dhl">${c}</div>` : ""; })()}
+				${(() => { const r = S.byId?.get(p.id) || p; if (highlightsOf(r).some((x) => x.key === "pro_israel")) return ""; const l = aipacLine(r); return l ? `<div class="meta aipac-line"><button type="button" class="linkish" data-jump="aipac" title="Jump to the AIPAC breakdown">${h(l)}</button></div>` : ""; })()}</div>
 			<div class="links dact">${callBtn(p, "btn primary call")}<button class="btn" data-close aria-label="Close">Close</button></div></div>
 		<div class="dbody">
 			${shareButtons(p.id)}

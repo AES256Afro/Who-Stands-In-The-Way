@@ -1,4 +1,4 @@
-import { S, STANCE, STANCE_ORDER, SIGNAL, KIND, h, api, toast, refresh, markDirty, chrome, seat, stanceOf, pill, appHtml, avatar, money, applyTextScale } from "./main.js";
+import { S, STANCE, STANCE_ORDER, SIGNAL, KIND, h, api, toast, refresh, markDirty, chrome, seat, stanceOf, pill, appHtml, avatar, money, applyTextScale, applyLook } from "./main.js";
 
 const $ = (s, el = document) => el.querySelector(s);
 const opt = (v, l, cur) => `<option value="${h(v)}"${String(cur ?? "") === String(v) ? " selected" : ""}>${h(l)}</option>`;
@@ -187,7 +187,22 @@ export function renderAdmin() {
 				<label>Small print (notes, captions, labels) <input type="range" id="ts-small" min="1" max="1.5" step="0.05" value="${h(d.text_scale?.small || 1)}"> <b id="ts-small-v">${Math.round((d.text_scale?.small || 1) * 100)}%</b></label>
 			</div>
 			<p class="note" style="margin-top:8px">This line is small print, at the size visitors will see it.</p>
-			<div class="actions"><button type="button" class="btn primary" data-ts-save>Save text size</button><button type="button" class="btn" data-ts-reset>Back to normal</button></div>`;
+			<div class="actions"><button type="button" class="btn primary" data-ts-save>Save text size</button><button type="button" class="btn" data-ts-reset>Back to normal</button></div>
+			<h3>Profile and hover sizes</h3><p class="note">The profile panel that slides in from the right, and the card that shows when you point at a seat.</p>
+			<div class="ts-controls">
+				<label>Profile panel width <input type="range" id="lk-drawer" min="520" max="960" step="20" value="${h(d.look?.drawer_w || 640)}"> <b id="lk-drawer-v">${d.look?.drawer_w || 640}px</b></label>
+				<label>Profile and hover text <input type="range" id="lk-ptext" min="0.9" max="1.5" step="0.05" value="${h(d.look?.profile_text || 1)}"> <b id="lk-ptext-v">${Math.round((d.look?.profile_text || 1) * 100)}%</b></label>
+				<label>Hover picture card width <input type="range" id="lk-hover" min="320" max="640" step="20" value="${h(d.look?.hover_w || 420)}"> <b id="lk-hover-v">${d.look?.hover_w || 420}px</b></label>
+			</div>
+			<div class="actions"><button type="button" class="btn primary" data-look-save>Save sizes</button><button type="button" class="btn" data-look-reset>Back to normal</button></div>
+			<h3>Highlights</h3><p class="note">What profiles, hover cards and share cards call out next to Medicare for All. Policies show the person's stance, like Medicare for All does; add new policies under Policies.</p>
+			<div class="hl-pick">
+				${d.policies.filter((pl) => pl.id !== "m4a").map((pl) => `<label><input type="checkbox" name="hl-pol" value="${h(pl.id)}"${(d.look?.highlights?.policies || []).includes(pl.id) ? " checked" : ""}> ${h(pl.name)}</label>`).join("")}
+				<label><input type="checkbox" name="hl-money" value="pro_israel"${(d.look?.highlights?.money || []).includes("pro_israel") ? " checked" : ""}> Israel lobby money (Track AIPAC)</label>
+				<label><input type="checkbox" name="hl-money" value="ai"${(d.look?.highlights?.money || []).includes("ai") ? " checked" : ""}> AI and data center money</label>
+			</div>
+			<p class="note">Share cards have room for four highlights.</p>
+			<div class="actions"><button type="button" class="btn primary" data-hl-save>Save highlights</button></div>`;
 	} else if (tab === "photomoney") {
 		body = `<div class="filters" style="position:static"><input type="search" id="pmpick" list="pols" placeholder="Start typing a name…" autocomplete="off" value="${h(S.pmPick || "")}"></div>
 			<div id="pmbox"><p class="note">Pick a person to change their photo, campaign money or super PAC money.</p></div>`;
@@ -288,6 +303,19 @@ export function bindAdmin() {
 		const tab = e.target.closest("[data-tab]");
 		if (tab && tab.dataset.tab === "issues") { location.hash = "#/issues"; return; }
 		if (tab) { S.adminTab = tab.dataset.tab; renderAdmin(); return; }
+		if (e.target.closest("[data-look-save]")) {
+			const body = { drawer_w: Number($("#lk-drawer").value), profile_text: Number($("#lk-ptext").value), hover_w: Number($("#lk-hover").value) };
+			return save(() => api("admin/look", { method: "PUT", body }), "Sizes saved");
+		}
+		if (e.target.closest("[data-look-reset]")) {
+			const body = { drawer_w: 640, profile_text: 1, hover_w: 420 };
+			applyLook(body);
+			return save(() => api("admin/look", { method: "PUT", body }), "Sizes back to normal");
+		}
+		if (e.target.closest("[data-hl-save]")) {
+			const pick = (n) => [...document.querySelectorAll(`input[name="${n}"]:checked`)].map((x) => x.value);
+			return save(() => api("admin/look", { method: "PUT", body: { highlights: { policies: pick("hl-pol"), money: pick("hl-money") } } }), "Highlights saved");
+		}
 		if (e.target.closest("[data-ts-save]")) {
 			const all = Number($("#ts-all").value), small = Number($("#ts-small").value);
 			return save(() => api("admin/text_scale", { method: "PUT", body: { all, small } }), "Text size saved");
@@ -345,6 +373,12 @@ export function bindAdmin() {
 		if (t.id === "policy" && location.hash.startsWith("#/admin")) renderAdmin();
 	});
 	document.addEventListener("input", (e) => {
+		if (["lk-drawer", "lk-ptext", "lk-hover"].includes(e.target.id)) {
+			const l = { drawer_w: Number($("#lk-drawer").value), profile_text: Number($("#lk-ptext").value), hover_w: Number($("#lk-hover").value) };
+			$("#lk-drawer-v").textContent = l.drawer_w + "px"; $("#lk-ptext-v").textContent = Math.round(l.profile_text * 100) + "%"; $("#lk-hover-v").textContent = l.hover_w + "px";
+			applyLook(l);
+			return;
+		}
 		if (e.target.id === "ts-all" || e.target.id === "ts-small") {
 			const all = Number($("#ts-all").value), small = Number($("#ts-small").value);
 			$("#ts-all-v").textContent = Math.round(all * 100) + "%"; $("#ts-small-v").textContent = Math.round(small * 100) + "%";

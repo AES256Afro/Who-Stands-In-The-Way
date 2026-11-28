@@ -82,7 +82,11 @@ export async function renderCard(p, host) {
 	if (p.emp > 0) facts.push(`${money(p.emp)} from health-industry employees`);
 	if (!facts.length && p.raised > 0) facts.push(`${money(p.raised)} raised in ${p.state_money ? "their latest campaign" : "2025-26"}`);
 	const ta = (() => { try { return JSON.parse(p.trackaipac || "null"); } catch { return null; } })();
-	if ((p.chamber === "house" || p.chamber === "senate") && ta?.status) {
+	const chips = p.highlights || [];
+	const hasIsrael = chips.some((c) => c.label === "Israel lobby money");
+	if (hasIsrael) {
+		// shown as a chip instead
+	} else if ((p.chamber === "house" || p.chamber === "senate") && ta?.status) {
 		// Same wording as aipacLine() in src/client/badges.js: Track AIPAC's total first.
 		facts.push(ta.status === "funded" && ta.total > 0 ? `Israel lobby total: ${money(ta.total)} (Track AIPAC)`
 			: ta.status === "rejects" ? "Rejects AIPAC money (Track AIPAC)" : "No pro-Israel PAC money (Track AIPAC)");
@@ -95,8 +99,15 @@ export async function renderCard(p, host) {
 		if (c.against > 0) bits.push(`${money(c.against)} spent against them`);
 		if (bits.length) facts.push(...bits); else facts.push("No AIPAC or pro-Israel PAC money on record");
 	}
-	const tight = facts.length > 2 || facts.join("").length > 110;
-	const tighter = facts.length > 3;
+	const tight = chips.length > 0 || facts.length > 2 || facts.join("").length > 110;
+	const tighter = facts.length > 3 || (chips.length > 0 && facts.length > 2);
+	const TONE = { paid: C.opposes, clean: C.supports };
+	// Highlight chips (admin: Site look → Highlights): policy stances and money flags, up to four in a row.
+	const chipRow = chips.length ? el("div", { flexDirection: "row", flexWrap: "wrap", marginTop: 12 },
+		chips.slice(0, 4).map((c) => el("div", { flexDirection: "column", background: TONE[c.tone] || C[c.tone] || C.unknown, borderRadius: 10,
+			padding: "6px 14px", marginRight: 10, marginBottom: 8, maxWidth: 420 },
+			el("div", { fontSize: 14, fontWeight: 600, color: "#ffffff", opacity: 0.85 }, c.label.toUpperCase()),
+			el("div", { fontSize: 22, fontWeight: 800, color: "#ffffff" }, c.value)))) : null;
 	const nameSize = p.name.length > 26 ? 44 : p.name.length > 18 ? 50 : 56;
 	const src = (st === "unknown" ? "No public position found yet." : "Sources on the profile.")
 		+ (p.state_money ? " State campaign finance records." : " FEC data, 2025-26 cycle; Israel lobby total from Track AIPAC.");
@@ -113,10 +124,12 @@ export async function renderCard(p, host) {
 				el("div", { flexDirection: "column", marginLeft: 40, width: 858 },
 					el("div", { fontFamily: "Serif", fontWeight: 700, fontSize: nameSize, lineHeight: 1.08 }, p.name),
 					el("div", { marginTop: 10, fontSize: 26, fontWeight: 600, color: C[p.party] || C.ink2 }, `${PARTY[p.party] || p.party || ""} · ${role}`),
-					el("div", { marginTop: 20, background: C[st], borderRadius: 14, padding: "16px 24px", fontSize: HEADLINE[st].length > 34 ? 32 : 40, fontWeight: 800, color: "#ffffff" }, HEADLINE[st]),
-					el("div", { flexDirection: "column", marginTop: 22 },
+					el("div", { marginTop: chips.length ? 14 : 20, background: C[st], borderRadius: 14, padding: chips.length ? "10px 20px" : "16px 24px",
+						fontSize: chips.length ? (HEADLINE[st].length > 34 ? 26 : 32) : (HEADLINE[st].length > 34 ? 32 : 40), fontWeight: 800, color: "#ffffff" }, HEADLINE[st]),
+					chipRow,
+					el("div", { flexDirection: "column", marginTop: chips.length ? 8 : 22 },
 						facts.map((t) => el("div", { fontSize: tighter ? 22 : tight ? 25 : 28, fontWeight: 600, marginBottom: tighter ? 3 : tight ? 5 : 8 }, t)),
-						p.phone ? el("div", { fontSize: 30, fontWeight: 600, color: C.supports, marginTop: 4 }, `Call: ${p.phone}`) : null)))),
+						p.phone ? el("div", { fontSize: chips.length ? 26 : 30, fontWeight: 600, color: C.supports, marginTop: 4 }, `Call: ${p.phone}`) : null)))),
 		el("div", { flexDirection: "column", padding: "0 56px 40px 56px" },
 			el("div", { fontSize: 17, color: C.ink3 }, src),
 			el("div", { height: 2, background: C.line, marginTop: 10, marginBottom: 12 }),

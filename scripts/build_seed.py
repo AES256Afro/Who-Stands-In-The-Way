@@ -770,7 +770,7 @@ if _sv.exists() and (_vv / "HS119_votes.csv").exists():
         emp = d.get("employees", {}).get("sectors", {}).get(k, 0) if g != "hospitals" else 0
         return d.get("health_sectors", {}).get(k, 0) + lead + emp
 
-    GROUP_ORDER = ("pharma", "insurers", "hospitals", "pro_israel", "defense", "fossil_fuels", "wall_street", "crypto", "tech", "guns", "real_estate", "labor")
+    GROUP_ORDER = ("pharma", "insurers", "hospitals", "pro_israel", "defense", "fossil_fuels", "wall_street", "crypto", "tech", "ai", "guns", "real_estate", "labor")
     groups = [g for g in GROUP_ORDER if any(v["sector"] == g for v in sector_votes)]
     want_side = {v["id"]: v["industry_side"] for v in sector_votes}
     chamber_by = {p["id"]: p["chamber"] for p in politicians if p["chamber"] in ("house", "senate")}
@@ -827,7 +827,11 @@ if _sv.exists() and (_vv / "HS119_votes.csv").exists():
                 b = buckets[tier(r["money"])]
                 b[0] += 1; b[1] += r["with"]; b[2] += r["cast"]
             top = sorted(rowsg, key=lambda x: -x[1]["money"])[:12]
-            influence.append({"sector": g, "chamber": ch, "votes": nvotes,
+            # Every member of the chamber with this industry's money or votes, for the lists and the seat map:
+            # [id, money, voted its way, votes cast].
+            everyone = [[pid_, r["money"], r["with"], r["cast"]] for pid_, d in fin_by.items() for r in d.get("matrix", [])
+                        if r["sector"] == g and r["chamber"] == ch]
+            influence.append({"sector": g, "chamber": ch, "votes": nvotes, "members": everyone,
                               "tiers": {t: {"members": b[0], "pct_with": round(100 * b[1] / b[2]) if b[2] else None} for t, b in buckets.items()},
                               "cuts": [round(c) for c in cuts],
                               "top": [{"id": pid_, "name": name_by.get(pid_, pid_), "party": party_by.get(pid_, ""), "money": r["money"],

@@ -82,6 +82,39 @@ export function aipacLine(p, fmt = money, { compact = false } = {}) {
 	return out.join(" · ") || "No AIPAC or pro-Israel PAC money on record";
 }
 
+// Highlights (admin: Site look → Highlights): what profiles and cards call out besides Medicare for All.
+// Same rules as highlightList() in src/index.ts, which draws them on share cards.
+let stanceIndex = null;
+const stanceFor = (pid, policy) => {
+	if (!stanceIndex || stanceIndex.src !== S.data.positions) {
+		stanceIndex = { src: S.data.positions, map: new Map() };
+		for (const x of S.data.positions) stanceIndex.map.set(x.politician_id + "|" + x.policy_id, x.stance);
+	}
+	return stanceIndex.map.get(pid + "|" + policy) || "unknown";
+};
+export function highlightsOf(p, fmt = money) {
+	const hl = S.data?.look?.highlights || { policies: [], money: ["pro_israel", "ai"] }, out = [];
+	for (const id of (hl.policies || []).filter((x) => x !== "m4a")) {
+		const pl = S.data.policies.find((x) => x.id === id);
+		if (pl) { const st = stanceFor(p.id, id); out.push({ key: id, label: pl.name, value: STANCE[st], tone: st }); }
+	}
+	if (p.chamber !== "house" && p.chamber !== "senate") return out;
+	if (hl.money?.includes("pro_israel")) {
+		const t = trackOf(p), c = careerOf(p);
+		out.push(t?.status === "funded" && t.total > 0 ? { key: "pro_israel", label: "Israel lobby money", value: fmt(t.total), tone: "paid" }
+			: t?.status === "rejects" ? { key: "pro_israel", label: "Israel lobby money", value: "Rejects AIPAC", tone: "clean" }
+			: !t && c?.for > 0 ? { key: "pro_israel", label: "Israel lobby money", value: fmt(c.for), tone: "paid" }
+			: { key: "pro_israel", label: "Israel lobby money", value: "None", tone: "clean" });
+	}
+	if (hl.money?.includes("ai")) {
+		const amt = Number(p.ai_money) || 0;
+		out.push({ key: "ai", label: "AI and data center money", value: amt > 0 ? fmt(amt) : "None", tone: amt > 0 ? "paid" : "clean" });
+	}
+	return out;
+}
+export const highlightChips = (p, fmt = money) => highlightsOf(p, fmt).map((x) =>
+	`<span class="hl hl-${h(x.tone)}"${x.key === "pro_israel" ? ' data-jump="aipac" role="button" tabindex="0" title="Jump to the AIPAC breakdown"' : ""}><small>${h(x.label)}</small><b>${h(x.value)}</b></span>`).join("");
+
 const LEVEL = { low: "Low", moderate: "Moderate", high: "High", very_high: "Very high" };
 
 export function hoverCard(p) {
@@ -94,7 +127,8 @@ export function hoverCard(p) {
 		${badges ? `<div class="hc-tags">${badges}</div>` : ""}
 		${aipac ? `<div class="hc-tags">${aipac}</div>` : ""}
 		${money_ ? `<div class="hc-line">${money_}</div>` : ""}
-		${aipacLine(p) ? `<div class="hc-line">${h(aipacLine(p, short))}</div>` : ""}
+		${(() => { const c = highlightChips(p, short); return c ? `<div class="hc-hl">${c}</div>` : ""; })()}
+		${!highlightsOf(p).some((x) => x.key === "pro_israel") && aipacLine(p) ? `<div class="hc-line">${h(aipacLine(p, short))}</div>` : ""}
 		${p.align && p.align !== "low" ? `<div class="hc-line">Health money–vote alignment: <b>${h(LEVEL[p.align])}</b></div>` : ""}
 		<div class="hc-foot">Click for the full profile</div>`;
 }
